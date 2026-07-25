@@ -38,14 +38,15 @@ import {
 } from '@/components/ui/empty'
 import { ActiveBadge, PaymentBadge } from '@/components/status-badges'
 import {
-  planName,
   initials,
   age,
   nextClass,
   studentPaymentStatus,
   type PaymentStatus,
+  type Plan,
   type Student,
 } from '@/lib/data'
+import { fetchPlans } from '@/lib/settings-api'
 import { fetchStudents } from '@/lib/students-api'
 import { cn } from '@/lib/utils'
 
@@ -59,7 +60,12 @@ const paymentRank: Record<PaymentStatus, number> = {
   pago: 2,
 }
 
-function compareStudents(a: Student, b: Student, key: SortKey): number {
+function compareStudents(
+  a: Student,
+  b: Student,
+  key: SortKey,
+  planName: (id: string) => string,
+): number {
   switch (key) {
     case 'name':
       return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
@@ -140,6 +146,7 @@ function SortableHead({
 export function StudentsList() {
   const router = useRouter()
   const [students, setStudents] = useState<Student[]>([])
+  const [plans, setPlans] = useState<Plan[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -147,13 +154,21 @@ export function StudentsList() {
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
+  const planName = useMemo(() => {
+    const map = new Map(plans.map((p) => [p.id, p.name]))
+    return (id: string) => map.get(id) ?? '—'
+  }, [plans])
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    fetchStudents()
-      .then((data) => {
-        if (!cancelled) setStudents(data)
+    Promise.all([fetchStudents(), fetchPlans()])
+      .then(([studentData, planData]) => {
+        if (!cancelled) {
+          setStudents(studentData)
+          setPlans(planData)
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -185,11 +200,11 @@ export function StudentsList() {
     })
 
     return list.sort((a, b) => {
-      const result = compareStudents(a, b, sortKey)
+      const result = compareStudents(a, b, sortKey, planName)
       if (result !== 0) return sortDir === 'asc' ? result : -result
       return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
     })
-  }, [students, query, filter, sortKey, sortDir])
+  }, [students, query, filter, sortKey, sortDir, planName])
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {

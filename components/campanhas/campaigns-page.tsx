@@ -78,25 +78,36 @@ import {
   campaignStatusLabel,
   campaignTypeLabel,
   campaignVariableHints,
-  createCampaign,
   daysUntilBirthday,
-  duplicateCampaign,
   formatShortDate,
   age,
   initials,
-  listCampaigns,
-  pauseCampaign,
-  patchCampaign,
-  removeCampaign,
   removeCampaignTemplate,
-  renameCampaign,
   renameCampaignTemplate,
-  resumeCampaign,
-  scheduleCampaign,
   students,
   toIsoDate,
 } from '@/lib/data'
+import {
+  createCampaign,
+  deleteCampaign,
+  duplicateCampaign,
+  fetchCampaigns,
+  updateCampaign,
+} from '@/lib/campaigns-api'
 import { cn } from '@/lib/utils'
+
+function errorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback
+}
+
+function toDatetimeLocal(value?: string) {
+  if (!value) return ''
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return value
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value.slice(0, 16)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 function StatusBadge({ status }: { status: CampaignStatus }) {
   const styles: Record<CampaignStatus, string> = {
@@ -151,7 +162,7 @@ function formFromCampaign(c: Campaign): CampaignForm {
     channel: c.channel,
     audience: c.audience,
     startDate: c.startDate,
-    scheduledAt: c.scheduledAt ?? '',
+    scheduledAt: toDatetimeLocal(c.scheduledAt),
     status: c.status,
     messageTemplate: c.messageTemplate,
     automation: c.automation ?? 'none',
@@ -162,6 +173,7 @@ function formFromCampaign(c: Campaign): CampaignForm {
 
 export function CampaignsPage() {
   const [tick, setTick] = useState(0)
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -175,11 +187,6 @@ export function CampaignsPage() {
   )
   const [templateNameDraft, setTemplateNameDraft] = useState('')
 
-  const campaigns = useMemo(() => {
-    void tick
-    return listCampaigns()
-  }, [tick])
-
   const templates = useMemo(() => {
     void tick
     return [...campaignMessageTemplates]
@@ -190,22 +197,38 @@ export function CampaignsPage() {
     [campaigns, selectedId],
   )
 
+  async function reloadCampaigns() {
+    const data = await fetchCampaigns()
+    setCampaigns(data)
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    fetchCampaigns()
+      .then((data) => {
+        if (!cancelled) setCampaigns(data)
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          toast.error(errorMessage(err, 'Não foi possível carregar as campanhas'))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   useEffect(() => {
     if (!selectedId) return
     if (!campaigns.some((c) => c.id === selectedId)) setSelectedId(null)
   }, [campaigns, selectedId])
 
-  function refresh() {
+  function refreshTemplates() {
     setTick((n) => n + 1)
   }
 
   function notify(title: string, description?: string) {
-    toast.success(title, {
-      description:
-        description ??
-        'A alteração será salva quando o banco de dados for conectado.',
-    })
-    refresh()
+    toast.success(title, { description })
   }
 
   function updateForm<K extends keyof CampaignForm>(
@@ -233,7 +256,7 @@ export function CampaignsPage() {
     updateForm('messageTemplate', tpl.body)
   }
 
-  function handleSaveCampaign(e: React.FormEvent) {
+  async function handleSaveCampaign(e: React.FormEvent) {
     e.preventDefault()
     if (!form.name.trim()) {
       toast.error('Informe o nome da campanha')
@@ -268,52 +291,72 @@ export function CampaignsPage() {
       automation: form.automation === 'none' ? null : form.automation,
     }
 
-    if (editingId) {
-      const next = patchCampaign(editingId, payload)
-      if (!next) {
-        toast.error('Não foi possível atualizar a campanha')
+    try {
+      if (editingId) {
+        const next = await updateCampaign(editingId, payload)
+        setDialogOpen(false)
+        await reloadCampaigns()
+        notify('Campanha atualizada', next.name)
         return
       }
+
+      const created = await createCampaign(payload)
       setDialogOpen(false)
-      notify('Campanha atualizada', next.name)
-      return
+      setSelectedId(created.id)
+      await reloadCampaigns()
+      notify('Campanha criada', created.name)
+    } catch (err) {
+      toast.error(
+        errorMessage(
+          err,
+          editingId
+            ? 'Não foi possível atualizar a campanha'
+            : 'Não foi possível criar a campanha',
+        ),
+      )
     }
-
-    const created = createCampaign(payload)
-    setDialogOpen(false)
-    setSelectedId(created.id)
-    notify('Campanha criada', created.name)
   }
 
-  function handleDuplicate(campaign: Campaign) {
-    const copy = duplicateCampaign(campaign.id)
-    if (!copy) {
-      toast.error('Não foi possível duplicar')
-      return
+  async function handleDuplicate(campaign: Campaign) {
+    try {
+      const copy = await duplicateCampaign(campaign.id)
+      setSelectedId(copy.id)
+      await reloadCampaigns()
+      notify('Campanha duplicada', copy.name)
+    } catch (err) {
+      toast.error(errorMessage(err, 'Não foi possível duplicar'))
     }
-    setSelectedId(copy.id)
-    notify('Campanha duplicada', copy.name)
   }
 
-  function handlePauseToggle(campaign: Campaign) {
-    if (campaign.status === 'pausada') {
-      const next = resumeCampaign(campaign.id)
-      if (next) notify('Campanha retomada', next.name)
-      return
+  async function handlePauseToggle(campaign: Campaign) {
+    try {
+      if (campaign.status === 'pausada') {
+        const next = await updateCampaign(campaign.id, {
+          status: 'em_andamento',
+        })
+        await reloadCampaigns()
+        notify('Campanha retomada', next.name)
+        return
+      }
+      const next = await updateCampaign(campaign.id, { status: 'pausada' })
+      await reloadCampaigns()
+      notify('Campanha pausada', next.name)
+    } catch (err) {
+      toast.error(errorMessage(err, 'Não foi possível alterar o status'))
     }
-    const next = pauseCampaign(campaign.id)
-    if (next) notify('Campanha pausada', next.name)
   }
 
-  function handleDelete(campaign: Campaign) {
+  async function handleDelete(campaign: Campaign) {
     const ok = window.confirm(`Excluir a campanha "${campaign.name}"?`)
     if (!ok) return
-    if (!removeCampaign(campaign.id)) {
-      toast.error('Não foi possível excluir')
-      return
+    try {
+      await deleteCampaign(campaign.id)
+      if (selectedId === campaign.id) setSelectedId(null)
+      await reloadCampaigns()
+      notify('Campanha excluída', campaign.name)
+    } catch (err) {
+      toast.error(errorMessage(err, 'Não foi possível excluir'))
     }
-    if (selectedId === campaign.id) setSelectedId(null)
-    notify('Campanha excluída', campaign.name)
   }
 
   function startRename(campaign: Campaign) {
@@ -321,14 +364,20 @@ export function CampaignsPage() {
     setRenameDraft(campaign.name)
   }
 
-  function commitRename(campaignId: string) {
-    const next = renameCampaign(campaignId, renameDraft)
-    if (!next) {
+  async function commitRename(campaignId: string) {
+    const trimmed = renameDraft.trim()
+    if (!trimmed) {
       toast.error('Informe um nome válido')
       return
     }
-    setRenamingId(null)
-    notify('Nome atualizado', next.name)
+    try {
+      const next = await updateCampaign(campaignId, { name: trimmed })
+      setRenamingId(null)
+      await reloadCampaigns()
+      notify('Nome atualizado', next.name)
+    } catch (err) {
+      toast.error(errorMessage(err, 'Não foi possível renomear'))
+    }
   }
 
   function startRenameTemplate(id: string, name: string) {
@@ -343,6 +392,7 @@ export function CampaignsPage() {
       return
     }
     setRenamingTemplateId(null)
+    refreshTemplates()
     notify('Nome do modelo atualizado', next.name)
   }
 
@@ -353,31 +403,40 @@ export function CampaignsPage() {
       toast.error('Mantenha ao menos um modelo')
       return
     }
+    refreshTemplates()
     notify('Modelo excluído', name)
   }
 
   function openSchedule(campaign: Campaign) {
     setSelectedId(campaign.id)
     setScheduleAt(
-      campaign.scheduledAt ??
+      toDatetimeLocal(campaign.scheduledAt) ||
         `${toIsoDate(new Date())}T09:00`,
     )
     setScheduleOpen(true)
   }
 
-  function handleSchedule(e: React.FormEvent) {
+  async function handleSchedule(e: React.FormEvent) {
     e.preventDefault()
     if (!selectedId || !scheduleAt) {
       toast.error('Informe data e horário')
       return
     }
-    const next = scheduleCampaign(selectedId, scheduleAt)
-    if (!next) {
-      toast.error('Não foi possível agendar')
-      return
+    try {
+      const next = await updateCampaign(selectedId, {
+        status: 'agendada',
+        scheduledAt: scheduleAt,
+        startDate: scheduleAt.slice(0, 10),
+      })
+      setScheduleOpen(false)
+      await reloadCampaigns()
+      notify(
+        'Campanha agendada',
+        `${next.name} · ${scheduleAt.replace('T', ' ')}`,
+      )
+    } catch (err) {
+      toast.error(errorMessage(err, 'Não foi possível agendar'))
     }
-    setScheduleOpen(false)
-    notify('Campanha agendada', `${next.name} · ${scheduleAt.replace('T', ' ')}`)
   }
 
   const running = campaigns.filter((c) => c.status === 'em_andamento').length

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -25,32 +25,36 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
-  SLOT_CAPACITY,
-  addTimeSlot,
-  afternoonSlots,
-  createPlan,
-  createProfessional,
   formatCurrency,
-  morningSlots,
-  patchPlan,
-  patchProfessional,
-  patchStudio,
-  patchStudioHour,
   planPeriodLabel,
-  plans,
-  professionals,
-  removePlan,
-  removeProfessional,
-  removeTimeSlot,
-  renameScheduleSlot,
-  setSlotCapacity,
-  studio,
-  studioHours,
   weekdays,
+  type Plan,
   type PlanFrequency,
   type PlanPeriod,
+  type Professional,
+  type StudioHour,
+  type StudioProfile,
   type Weekday,
 } from '@/lib/data'
+import type { TimeSlotDto } from '@/lib/validations/settings'
+import {
+  createPlan,
+  createProfessional,
+  createTimeSlot,
+  deletePlan,
+  deleteProfessional,
+  deleteTimeSlot,
+  fetchPlans,
+  fetchProfessionals,
+  fetchStudio,
+  fetchStudioHours,
+  fetchTimeSlots,
+  updatePlan,
+  updateProfessional,
+  updateStudio,
+  updateStudioHour,
+  updateTimeSlot,
+} from '@/lib/settings-api'
 
 const periodOptions = (
   Object.entries(planPeriodLabel) as [PlanPeriod, string][]
@@ -62,59 +66,132 @@ const frequencyOptions = [
   { value: '3', label: '3x / semana' },
 ]
 
-export function SettingsPage() {
-  const [version, setVersion] = useState(0)
+const TIME_RE = /^\d{2}:\d{2}$/
 
-  const studioData = useMemo(() => {
-    void version
-    return { ...studio }
-  }, [version])
+function errorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback
+}
 
-  const hours = useMemo(() => {
-    void version
-    return studioHours.map((h) => ({ ...h }))
-  }, [version])
+function suggestSlotTime(
+  period: 'manha' | 'tarde',
+  slots: TimeSlotDto[],
+): string {
+  const used = new Set(slots.map((s) => s.time))
+  const count = slots.filter((s) => s.period === period).length
+  let candidate =
+    period === 'manha'
+      ? `${String(7 + count).padStart(2, '0')}:00`
+      : `${15 + count}:00`
 
-  const team = useMemo(() => {
-    void version
-    return professionals.map((p) => ({ ...p }))
-  }, [version])
-
-  const planList = useMemo(() => {
-    void version
-    return [...plans].sort((a, b) => {
-      const periodOrder = { semestral: 0, trimestral: 1, mensal: 2 }
-      const byPeriod = periodOrder[a.period] - periodOrder[b.period]
-      if (byPeriod !== 0) return byPeriod
-      return a.frequency - b.frequency
-    })
-  }, [version])
-
-  const morning = useMemo(() => {
-    void version
-    return [...morningSlots]
-  }, [version])
-
-  const afternoon = useMemo(() => {
-    void version
-    return [...afternoonSlots]
-  }, [version])
-
-  const capacity = useMemo(() => {
-    void version
-    return SLOT_CAPACITY
-  }, [version])
-
-  function refresh() {
-    setVersion((v) => v + 1)
+  let guard = 0
+  while (used.has(candidate) && guard < 24) {
+    const [h, m] = candidate.split(':').map(Number)
+    const next = h * 60 + m + 60
+    candidate = `${String(Math.floor(next / 60) % 24).padStart(2, '0')}:${String(next % 60).padStart(2, '0')}`
+    guard += 1
   }
+  return candidate
+}
+
+export function SettingsPage() {
+  const [studioData, setStudioData] = useState<StudioProfile | null>(null)
+  const [hours, setHours] = useState<StudioHour[]>([])
+  const [team, setTeam] = useState<Professional[]>([])
+  const [plans, setPlans] = useState<Plan[]>([])
+  const [timeSlots, setTimeSlots] = useState<TimeSlotDto[]>([])
+
+  const planList = useMemo(
+    () =>
+      [...plans].sort((a, b) => {
+        const periodOrder = { semestral: 0, trimestral: 1, mensal: 2 }
+        const byPeriod = periodOrder[a.period] - periodOrder[b.period]
+        if (byPeriod !== 0) return byPeriod
+        return a.frequency - b.frequency
+      }),
+    [plans],
+  )
+
+  const morning = useMemo(
+    () =>
+      timeSlots
+        .filter((s) => s.period === 'manha')
+        .sort((a, b) => a.time.localeCompare(b.time)),
+    [timeSlots],
+  )
+
+  const afternoon = useMemo(
+    () =>
+      timeSlots
+        .filter((s) => s.period === 'tarde')
+        .sort((a, b) => a.time.localeCompare(b.time)),
+    [timeSlots],
+  )
+
+  const capacity = timeSlots[0]?.capacity ?? 4
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [studio, studioHours, professionals, planRows, slots] =
+          await Promise.all([
+            fetchStudio(),
+            fetchStudioHours(),
+            fetchProfessionals(),
+            fetchPlans(),
+            fetchTimeSlots(),
+          ])
+        if (cancelled) return
+        setStudioData(studio)
+        setHours(studioHours)
+        setTeam(professionals)
+        setPlans(planRows)
+        setTimeSlots(slots)
+      } catch (err: unknown) {
+        if (!cancelled) {
+          toast.error(
+            errorMessage(err, 'Não foi possível carregar as configurações'),
+          )
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function notify(label: string) {
-    toast.success(`${label} atualizado`, {
-      description:
-        'A alteração será salva quando o banco de dados for conectado.',
-      duration: 1800,
-    })
+    toast.success(`${label} atualizado`, { duration: 1800 })
+  }
+
+  async function reloadTimeSlots() {
+    setTimeSlots(await fetchTimeSlots())
+  }
+
+  async function reloadPlans() {
+    setPlans(await fetchPlans())
+  }
+
+  async function reloadProfessionals() {
+    setTeam(await fetchProfessionals())
+  }
+
+  async function reloadHours() {
+    setHours(await fetchStudioHours())
+  }
+
+  if (!studioData) {
+    return (
+      <>
+        <PageHeader
+          title="Configurações"
+          description="Planos, horários e equipe do estúdio"
+        />
+        <div className="p-4 text-sm text-muted-foreground md:p-6">
+          Carregando configurações…
+        </div>
+      </>
+    )
   }
 
   return (
@@ -137,39 +214,51 @@ export function SettingsPage() {
               <InlineField
                 label="Nome"
                 value={studioData.name}
-                onSave={(name) => {
-                  patchStudio({ name })
-                  refresh()
-                  notify('Nome')
+                onSave={async (name) => {
+                  try {
+                    setStudioData(await updateStudio({ name }))
+                    notify('Nome')
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível salvar'))
+                  }
                 }}
               />
               <InlineField
                 label="Responsável"
                 value={studioData.owner}
-                onSave={(owner) => {
-                  patchStudio({ owner })
-                  refresh()
-                  notify('Responsável')
+                onSave={async (owner) => {
+                  try {
+                    setStudioData(await updateStudio({ owner }))
+                    notify('Responsável')
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível salvar'))
+                  }
                 }}
               />
               <InlineField
                 label="E-mail"
                 type="email"
                 value={studioData.email}
-                onSave={(email) => {
-                  patchStudio({ email })
-                  refresh()
-                  notify('E-mail')
+                onSave={async (email) => {
+                  try {
+                    setStudioData(await updateStudio({ email }))
+                    notify('E-mail')
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível salvar'))
+                  }
                 }}
               />
               <InlineField
                 label="Telefone"
                 type="tel"
                 value={studioData.phone}
-                onSave={(phone) => {
-                  patchStudio({ phone })
-                  refresh()
-                  notify('Telefone')
+                onSave={async (phone) => {
+                  try {
+                    setStudioData(await updateStudio({ phone }))
+                    notify('Telefone')
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível salvar'))
+                  }
                 }}
               />
               <div className="flex flex-col gap-0.5 py-2">
@@ -209,14 +298,23 @@ export function SettingsPage() {
                         <InlineCell
                           value={hour.open}
                           className="font-mono tabular-nums"
-                          onSave={(open) => {
-                            const updated = patchStudioHour(weekday, { open })
-                            if (!updated) {
+                          onSave={async (open) => {
+                            if (!TIME_RE.test(open.trim())) {
                               toast.error('Horário inválido (use HH:MM)')
                               return
                             }
-                            refresh()
-                            notify('Abertura')
+                            try {
+                              await updateStudioHour({
+                                weekday: weekday as Weekday,
+                                open: open.trim(),
+                              })
+                              await reloadHours()
+                              notify('Abertura')
+                            } catch (err) {
+                              toast.error(
+                                errorMessage(err, 'Não foi possível salvar'),
+                              )
+                            }
                           }}
                         />
                       </TableCell>
@@ -224,14 +322,23 @@ export function SettingsPage() {
                         <InlineCell
                           value={hour.close}
                           className="font-mono tabular-nums"
-                          onSave={(close) => {
-                            const updated = patchStudioHour(weekday, { close })
-                            if (!updated) {
+                          onSave={async (close) => {
+                            if (!TIME_RE.test(close.trim())) {
                               toast.error('Horário inválido (use HH:MM)')
                               return
                             }
-                            refresh()
-                            notify('Fechamento')
+                            try {
+                              await updateStudioHour({
+                                weekday: weekday as Weekday,
+                                close: close.trim(),
+                              })
+                              await reloadHours()
+                              notify('Fechamento')
+                            } catch (err) {
+                              toast.error(
+                                errorMessage(err, 'Não foi possível salvar'),
+                              )
+                            }
                           }}
                         />
                       </TableCell>
@@ -255,10 +362,24 @@ export function SettingsPage() {
                     type="number"
                     value={String(capacity)}
                     displayValue={`${capacity} alunos`}
-                    onSave={(raw) => {
-                      setSlotCapacity(Number(raw) || 1)
-                      refresh()
-                      notify('Capacidade')
+                    onSave={async (raw) => {
+                      const next = Math.min(
+                        12,
+                        Math.max(1, Math.round(Number(raw) || 1)),
+                      )
+                      try {
+                        await Promise.all(
+                          timeSlots.map((slot) =>
+                            updateTimeSlot(slot.id, { capacity: next }),
+                          ),
+                        )
+                        await reloadTimeSlots()
+                        notify('Capacidade')
+                      } catch (err) {
+                        toast.error(
+                          errorMessage(err, 'Não foi possível salvar'),
+                        )
+                      }
                     }}
                   />
                 </div>
@@ -267,68 +388,94 @@ export function SettingsPage() {
               <SlotGroup
                 title="Manhã"
                 slots={morning}
-                onRename={(oldTime, next) => {
-                  const result = renameScheduleSlot(oldTime, next)
-                  if (!result.ok) {
-                    toast.error(result.error)
+                onRename={async (slot, next) => {
+                  const time = next.trim()
+                  if (!TIME_RE.test(time)) {
+                    toast.error('Use o formato HH:MM')
                     return
                   }
-                  refresh()
-                  notify('Horário')
+                  if (time === slot.time) return
+                  try {
+                    await updateTimeSlot(slot.id, { time })
+                    await reloadTimeSlots()
+                    notify('Horário')
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível renomear'))
+                  }
                 }}
-                onAdd={() => {
-                  const result = addTimeSlot('manha')
-                  if (!result.ok) {
-                    toast.error(result.error)
-                    return
+                onAdd={async () => {
+                  const time = suggestSlotTime('manha', timeSlots)
+                  try {
+                    const created = await createTimeSlot({
+                      time,
+                      period: 'manha',
+                      capacity,
+                    })
+                    await reloadTimeSlots()
+                    toast.success('Horário adicionado', {
+                      description: created.time,
+                    })
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível adicionar'))
                   }
-                  refresh()
-                  toast.success('Horário adicionado', {
-                    description: result.time,
-                  })
                 }}
-                onRemove={(time) => {
-                  const result = removeTimeSlot(time)
-                  if (!result.ok) {
-                    toast.error(result.error)
-                    return
+                onRemove={async (slot) => {
+                  try {
+                    await deleteTimeSlot(slot.id)
+                    await reloadTimeSlots()
+                    toast.success('Horário removido', {
+                      description: slot.time,
+                    })
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível remover'))
                   }
-                  refresh()
-                  toast.success('Horário removido', { description: time })
                 }}
               />
 
               <SlotGroup
                 title="Tarde"
                 slots={afternoon}
-                onRename={(oldTime, next) => {
-                  const result = renameScheduleSlot(oldTime, next)
-                  if (!result.ok) {
-                    toast.error(result.error)
+                onRename={async (slot, next) => {
+                  const time = next.trim()
+                  if (!TIME_RE.test(time)) {
+                    toast.error('Use o formato HH:MM')
                     return
                   }
-                  refresh()
-                  notify('Horário')
+                  if (time === slot.time) return
+                  try {
+                    await updateTimeSlot(slot.id, { time })
+                    await reloadTimeSlots()
+                    notify('Horário')
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível renomear'))
+                  }
                 }}
-                onAdd={() => {
-                  const result = addTimeSlot('tarde')
-                  if (!result.ok) {
-                    toast.error(result.error)
-                    return
+                onAdd={async () => {
+                  const time = suggestSlotTime('tarde', timeSlots)
+                  try {
+                    const created = await createTimeSlot({
+                      time,
+                      period: 'tarde',
+                      capacity,
+                    })
+                    await reloadTimeSlots()
+                    toast.success('Horário adicionado', {
+                      description: created.time,
+                    })
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível adicionar'))
                   }
-                  refresh()
-                  toast.success('Horário adicionado', {
-                    description: result.time,
-                  })
                 }}
-                onRemove={(time) => {
-                  const result = removeTimeSlot(time)
-                  if (!result.ok) {
-                    toast.error(result.error)
-                    return
+                onRemove={async (slot) => {
+                  try {
+                    await deleteTimeSlot(slot.id)
+                    await reloadTimeSlots()
+                    toast.success('Horário removido', {
+                      description: slot.time,
+                    })
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível remover'))
                   }
-                  refresh()
-                  toast.success('Horário removido', { description: time })
                 }}
               />
             </div>
@@ -346,10 +493,14 @@ export function SettingsPage() {
             <Button
               type="button"
               size="sm"
-              onClick={() => {
-                createProfessional()
-                refresh()
-                toast.success('Profissional adicionado')
+              onClick={async () => {
+                try {
+                  await createProfessional()
+                  await reloadProfessionals()
+                  toast.success('Profissional adicionado')
+                } catch (err) {
+                  toast.error(errorMessage(err, 'Não foi possível adicionar'))
+                }
               }}
             >
               <Plus data-icon="inline-start" />
@@ -373,41 +524,67 @@ export function SettingsPage() {
                     <InlineCell
                       value={professional.name}
                       className="font-medium"
-                      onSave={(name) => {
+                      onSave={async (name) => {
                         if (!name) return
-                        patchProfessional(professional.id, { name })
-                        refresh()
-                        notify('Nome')
+                        try {
+                          await updateProfessional(professional.id, { name })
+                          await reloadProfessionals()
+                          notify('Nome')
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível salvar'),
+                          )
+                        }
                       }}
                     />
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">
                     <InlineCell
                       value={professional.role}
-                      onSave={(role) => {
-                        patchProfessional(professional.id, { role })
-                        refresh()
-                        notify('Função')
+                      onSave={async (role) => {
+                        try {
+                          await updateProfessional(professional.id, { role })
+                          await reloadProfessionals()
+                          notify('Função')
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível salvar'),
+                          )
+                        }
                       }}
                     />
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
                     <InlineCell
                       value={professional.registration}
-                      onSave={(registration) => {
-                        patchProfessional(professional.id, { registration })
-                        refresh()
-                        notify('Registro')
+                      onSave={async (registration) => {
+                        try {
+                          await updateProfessional(professional.id, {
+                            registration,
+                          })
+                          await reloadProfessionals()
+                          notify('Registro')
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível salvar'),
+                          )
+                        }
                       }}
                     />
                   </TableCell>
                   <TableCell className="hidden lg:table-cell">
                     <InlineCell
                       value={professional.email}
-                      onSave={(email) => {
-                        patchProfessional(professional.id, { email })
-                        refresh()
-                        notify('E-mail')
+                      onSave={async (email) => {
+                        try {
+                          await updateProfessional(professional.id, { email })
+                          await reloadProfessionals()
+                          notify('E-mail')
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível salvar'),
+                          )
+                        }
                       }}
                     />
                   </TableCell>
@@ -418,15 +595,21 @@ export function SettingsPage() {
                       variant="ghost"
                       className="text-muted-foreground hover:text-destructive"
                       aria-label={`Excluir ${professional.name}`}
-                      onClick={() => {
-                        if (!removeProfessional(professional.id)) {
-                          toast.error('Mantenha ao menos um profissional')
-                          return
+                      onClick={async () => {
+                        try {
+                          await deleteProfessional(professional.id)
+                          await reloadProfessionals()
+                          toast.success('Profissional removido', {
+                            description: professional.name,
+                          })
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(
+                              err,
+                              'Mantenha ao menos um profissional',
+                            ),
+                          )
                         }
-                        refresh()
-                        toast.success('Profissional removido', {
-                          description: professional.name,
-                        })
                       }}
                     >
                       <Trash2 className="size-3.5" />
@@ -449,10 +632,18 @@ export function SettingsPage() {
             <Button
               type="button"
               size="sm"
-              onClick={() => {
-                createPlan({ period: 'mensal', frequency: 1, price: 0 })
-                refresh()
-                toast.success('Plano adicionado')
+              onClick={async () => {
+                try {
+                  await createPlan({
+                    period: 'mensal',
+                    frequency: 1,
+                    price: 0,
+                  })
+                  await reloadPlans()
+                  toast.success('Plano adicionado')
+                } catch (err) {
+                  toast.error(errorMessage(err, 'Não foi possível adicionar'))
+                }
               }}
             >
               <Plus data-icon="inline-start" />
@@ -476,11 +667,17 @@ export function SettingsPage() {
                     <InlineCell
                       value={plan.name}
                       className="font-medium"
-                      onSave={(name) => {
+                      onSave={async (name) => {
                         if (!name) return
-                        patchPlan(plan.id, { name })
-                        refresh()
-                        notify('Nome do plano')
+                        try {
+                          await updatePlan(plan.id, { name })
+                          await reloadPlans()
+                          notify('Nome do plano')
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível salvar'),
+                          )
+                        }
                       }}
                     />
                   </TableCell>
@@ -490,10 +687,18 @@ export function SettingsPage() {
                       value={plan.period}
                       displayValue={planPeriodLabel[plan.period]}
                       options={periodOptions}
-                      onSave={(period) => {
-                        patchPlan(plan.id, { period: period as PlanPeriod })
-                        refresh()
-                        notify('Período')
+                      onSave={async (period) => {
+                        try {
+                          await updatePlan(plan.id, {
+                            period: period as PlanPeriod,
+                          })
+                          await reloadPlans()
+                          notify('Período')
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível salvar'),
+                          )
+                        }
                       }}
                     />
                   </TableCell>
@@ -503,11 +708,17 @@ export function SettingsPage() {
                       value={String(plan.frequency)}
                       displayValue={plan.frequencyLabel}
                       options={frequencyOptions}
-                      onSave={(raw) => {
+                      onSave={async (raw) => {
                         const frequency = Number(raw) as PlanFrequency
-                        patchPlan(plan.id, { frequency })
-                        refresh()
-                        notify('Frequência')
+                        try {
+                          await updatePlan(plan.id, { frequency })
+                          await reloadPlans()
+                          notify('Frequência')
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível salvar'),
+                          )
+                        }
                       }}
                     />
                   </TableCell>
@@ -517,12 +728,18 @@ export function SettingsPage() {
                       value={String(plan.price)}
                       displayValue={formatCurrency(plan.price)}
                       className="font-medium tabular-nums"
-                      onSave={(raw) => {
-                        patchPlan(plan.id, {
-                          price: Math.max(0, Number(raw) || 0),
-                        })
-                        refresh()
-                        notify('Valor')
+                      onSave={async (raw) => {
+                        try {
+                          await updatePlan(plan.id, {
+                            price: Math.max(0, Number(raw) || 0),
+                          })
+                          await reloadPlans()
+                          notify('Valor')
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível salvar'),
+                          )
+                        }
                       }}
                     />
                   </TableCell>
@@ -533,16 +750,18 @@ export function SettingsPage() {
                       variant="ghost"
                       className="text-muted-foreground hover:text-destructive"
                       aria-label={`Excluir ${plan.name}`}
-                      onClick={() => {
-                        const result = removePlan(plan.id)
-                        if (!result.ok) {
-                          toast.error(result.error)
-                          return
+                      onClick={async () => {
+                        try {
+                          await deletePlan(plan.id)
+                          await reloadPlans()
+                          toast.success('Plano removido', {
+                            description: plan.name,
+                          })
+                        } catch (err) {
+                          toast.error(
+                            errorMessage(err, 'Não foi possível remover'),
+                          )
                         }
-                        refresh()
-                        toast.success('Plano removido', {
-                          description: plan.name,
-                        })
                       }}
                     >
                       <Trash2 className="size-3.5" />
@@ -566,10 +785,10 @@ function SlotGroup({
   onRemove,
 }: {
   title: string
-  slots: string[]
-  onRename: (oldTime: string, next: string) => void
+  slots: TimeSlotDto[]
+  onRename: (slot: TimeSlotDto, next: string) => void
   onAdd: () => void
-  onRemove: (time: string) => void
+  onRemove: (slot: TimeSlotDto) => void
 }) {
   return (
     <div className="rounded-lg border p-3">
@@ -583,23 +802,23 @@ function SlotGroup({
         </Button>
       </div>
       <div className="flex flex-wrap gap-2">
-        {slots.map((time) => (
+        {slots.map((slot) => (
           <div
-            key={time}
+            key={slot.id}
             className="flex items-center gap-1 rounded-lg border bg-background px-1.5 py-1"
           >
             <InlineCell
-              value={time}
+              value={slot.time}
               className="w-[4.5rem] font-mono text-sm tabular-nums"
-              onSave={(next) => onRename(time, next)}
+              onSave={(next) => onRename(slot, next)}
             />
             <Button
               type="button"
               size="icon-xs"
               variant="ghost"
               className="text-muted-foreground hover:text-destructive"
-              aria-label={`Remover ${time}`}
-              onClick={() => onRemove(time)}
+              aria-label={`Remover ${slot.time}`}
+              onClick={() => onRemove(slot)}
             >
               <Trash2 className="size-3.5" />
             </Button>

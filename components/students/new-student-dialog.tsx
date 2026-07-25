@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
@@ -32,11 +32,11 @@ import {
 } from '@/components/ui/select'
 import {
   formatCurrency,
-  getPlan,
-  plans,
   planPeriodLabel,
   studentChargedValue,
+  type Plan,
 } from '@/lib/data'
+import { fetchPlans } from '@/lib/settings-api'
 import { createStudent } from '@/lib/students-api'
 
 const periodOrder = ['semestral', 'trimestral', 'mensal'] as const
@@ -45,17 +45,33 @@ export function NewStudentDialog() {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [planId, setPlanId] = useState('sem-2x')
+  const [plans, setPlans] = useState<Plan[]>([])
+  const [planId, setPlanId] = useState('')
   const [discountPercent, setDiscountPercent] = useState(0)
 
-  const selectedPlan = useMemo(() => getPlan(planId), [planId])
+  useEffect(() => {
+    if (!open) return
+    void fetchPlans()
+      .then((data) => {
+        setPlans(data)
+        setPlanId((current) => current || data[0]?.id || '')
+      })
+      .catch(() => {
+        toast.error('Não foi possível carregar os planos')
+      })
+  }, [open])
+
+  const selectedPlan = useMemo(
+    () => plans.find((p) => p.id === planId),
+    [plans, planId],
+  )
   const finalValue = useMemo(
     () => studentChargedValue(selectedPlan, discountPercent),
     [selectedPlan, discountPercent],
   )
 
   function resetForm() {
-    setPlanId('sem-2x')
+    setPlanId(plans[0]?.id ?? '')
     setDiscountPercent(0)
   }
 
@@ -71,6 +87,10 @@ export function NewStudentDialog() {
 
     if (!name || !birthDate) {
       toast.error('Nome e data de nascimento são obrigatórios')
+      return
+    }
+    if (!planId) {
+      toast.error('Selecione um plano')
       return
     }
 

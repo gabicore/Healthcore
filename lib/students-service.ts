@@ -5,6 +5,7 @@ import {
   toDbPaymentMethod,
   toDbWeekday,
 } from '@/lib/db-mappers'
+import { DEFAULT_STUDIO_ID } from '@/lib/constants'
 import { prisma } from '@/lib/prisma'
 import {
   serializeStudent,
@@ -14,8 +15,6 @@ import type {
   CreateStudentInput,
   UpdateStudentInput,
 } from '@/lib/validations/student'
-
-const DEFAULT_STUDIO_ID = 'studio-1'
 
 export async function listStudents(params?: {
   q?: string
@@ -137,7 +136,7 @@ export async function updateStudentRecord(
     monthlyValue = input.monthlyValue
   }
 
-  if (input.schedule) {
+  if (input.schedule !== undefined) {
     await prisma.scheduleSlot.deleteMany({ where: { studentId: id } })
   }
 
@@ -180,7 +179,7 @@ export async function updateStudentRecord(
       ...(input.paymentMethod !== undefined
         ? { paymentMethod: toDbPaymentMethod(input.paymentMethod) }
         : {}),
-      ...(input.schedule
+      ...(input.schedule !== undefined
         ? {
             schedule: {
               create: input.schedule.map((slot) => ({

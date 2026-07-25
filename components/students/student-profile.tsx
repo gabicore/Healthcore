@@ -80,6 +80,7 @@ import {
 import { ActiveBadge, PaymentStatusSelect } from '@/components/status-badges'
 import {
   type Evolution,
+  type Payment,
   type PaymentMethod,
   type PhysicalAssessment,
   type ScheduleSlot,
@@ -91,27 +92,29 @@ import {
   bmiLabel,
   formatCurrency,
   formatShortDate,
-  getPlan,
-  getStudent,
   patchStudent,
   paymentMethods,
-  planName,
   planPeriodLabel,
-  planWeeklyLimit,
-  plans,
   studentChargedValue,
-  setPaymentMethod,
-  setPaymentPaidAt,
-  setPaymentStatus,
-  setStudentFinancialStatus,
-  studio,
   studentPaymentStatus,
   morningSlots,
   afternoonSlots,
-  toIsoDate,
   weekdays,
   type PaymentStatus,
+  type Plan,
 } from '@/lib/data'
+import {
+  createAssessment as createAssessmentApi,
+  deleteAssessment as deleteAssessmentApi,
+  updateAssessment as updateAssessmentApi,
+} from '@/lib/assessments-api'
+import {
+  createEvolution as createEvolutionApi,
+  deleteEvolution as deleteEvolutionApi,
+  updateEvolution as updateEvolutionApi,
+} from '@/lib/evolutions-api'
+import { updatePayment } from '@/lib/payments-api'
+import { fetchPlans } from '@/lib/settings-api'
 import { updateStudent } from '@/lib/students-api'
 import type { UpdateStudentInput } from '@/lib/validations/student'
 
@@ -151,17 +154,33 @@ const activeOptions = [
   { value: 'false', label: 'Inativo' },
 ]
 
-const planOptions = plans.map((p) => ({
-  value: p.id,
-  label: `${planPeriodLabel[p.period]} · ${p.frequencyLabel} — ${formatCurrency(p.price)}`,
-}))
-
 export function StudentProfile({ student: initial }: { student: Student }) {
   const [student, setStudent] = useState(initial)
+  const [plans, setPlans] = useState<Plan[]>([])
   const [slotWeekday, setSlotWeekday] = useState<Weekday>('Segunda')
   const [slotTime, setSlotTime] = useState('08:00')
   const [assessmentIndex, setAssessmentIndex] = useState(0)
   const [evolutionIndex, setEvolutionIndex] = useState(0)
+
+  useEffect(() => {
+    void fetchPlans()
+      .then(setPlans)
+      .catch(() => {
+        toast.error('Não foi possível carregar os planos')
+      })
+  }, [])
+
+  const planById = useMemo(
+    () => new Map(plans.map((p) => [p.id, p])),
+    [plans],
+  )
+  const getPlan = (id: string) => planById.get(id)
+  const planName = (id: string) => getPlan(id)?.name ?? '—'
+  const planWeeklyLimit = (id: string) => getPlan(id)?.frequency ?? 1
+  const planOptions = plans.map((p) => ({
+    value: p.id,
+    label: `${planPeriodLabel[p.period]} · ${p.frequencyLabel} — ${formatCurrency(p.price)}`,
+  }))
 
   const sortedAssessments = useMemo(
     () =>
@@ -251,123 +270,178 @@ export function StudentProfile({ student: initial }: { student: Student }) {
     }
   }
 
-  function updateEvolution(
+  function syncPaymentInState(updated: Payment) {
+    setStudent((prev) => ({
+      ...prev,
+      payments: prev.payments.map((p) =>
+        p.id === updated.id ? updated : p,
+      ),
+    }))
+  }
+
+  async function updateEvolution(
     id: string,
     key: keyof Evolution,
     value: string,
   ) {
-    setStudent((prev) => {
-      const evolutions = prev.evolutions.map((e) =>
+    const previous = student.evolutions.find((e) => e.id === id)
+    setStudent((prev) => ({
+      ...prev,
+      evolutions: prev.evolutions.map((e) =>
         e.id === id ? { ...e, [key]: value } : e,
+      ),
+    }))
+    try {
+      const updated = await updateEvolutionApi(student.id, id, {
+        [key]: value,
+      })
+      setStudent((prev) => ({
+        ...prev,
+        evolutions: prev.evolutions.map((e) =>
+          e.id === updated.id ? updated : e,
+        ),
+      }))
+    } catch (error) {
+      if (previous) {
+        setStudent((prev) => ({
+          ...prev,
+          evolutions: prev.evolutions.map((e) =>
+            e.id === id ? previous : e,
+          ),
+        }))
+      }
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível salvar a evolução',
       )
-      patchStudent(prev.id, { evolutions })
-      return { ...prev, evolutions }
-    })
-  }
-
-  function addEvolution() {
-    const blank: Evolution = {
-      id: `e-${Date.now()}`,
-      date: toIsoDate(new Date()),
-      professional: studio.owner,
-      clinical: '',
-      complaints: '',
-      improvements: '',
-      exercises: '',
-      conduct: '',
     }
-    setStudent((prev) => {
-      const evolutions = [blank, ...prev.evolutions]
-      patchStudent(prev.id, { evolutions })
-      return { ...prev, evolutions }
-    })
-    setEvolutionIndex(0)
-    toast.success('Nova evolução adicionada', {
-      description: 'Preencha os campos do novo bloco.',
-    })
   }
 
-  function removeEvolution(id: string) {
-    setStudent((prev) => {
-      const evolutions = prev.evolutions.filter((e) => e.id !== id)
-      patchStudent(prev.id, { evolutions })
-      return { ...prev, evolutions }
-    })
-    setEvolutionIndex(0)
-    toast.success('Evolução removida')
+  async function addEvolution() {
+    try {
+      const created = await createEvolutionApi(student.id)
+      setStudent((prev) => ({
+        ...prev,
+        evolutions: [created, ...prev.evolutions],
+      }))
+      setEvolutionIndex(0)
+      toast.success('Nova evolução adicionada', {
+        description: 'Preencha os campos do novo bloco.',
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível adicionar a evolução',
+      )
+    }
   }
 
-  function updateAssessment(
+  async function removeEvolution(id: string) {
+    const previous = student.evolutions
+    setStudent((prev) => ({
+      ...prev,
+      evolutions: prev.evolutions.filter((e) => e.id !== id),
+    }))
+    setEvolutionIndex(0)
+    try {
+      await deleteEvolutionApi(student.id, id)
+      toast.success('Evolução removida')
+    } catch (error) {
+      setStudent((prev) => ({ ...prev, evolutions: previous }))
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível remover a evolução',
+      )
+    }
+  }
+
+  async function updateAssessment(
     id: string,
     patch: Partial<Omit<PhysicalAssessment, 'measures'>> & {
       measures?: Partial<PhysicalAssessment['measures']>
     },
   ) {
-    setStudent((prev) => {
-      const assessments = prev.assessments
-        .map((a) =>
-          a.id === id
-            ? {
-                ...a,
-                ...patch,
-                measures: patch.measures
-                  ? { ...a.measures, ...patch.measures }
-                  : a.measures,
-              }
-            : a,
-        )
-        .sort((a, b) => a.date.localeCompare(b.date))
-      patchStudent(prev.id, { assessments })
-      return { ...prev, assessments }
-    })
-  }
-
-  function addAssessment() {
-    const latestAssessment =
-      student.assessments[student.assessments.length - 1]
-    const blank: PhysicalAssessment = {
-      id: `a-${Date.now()}`,
-      date: toIsoDate(new Date()),
-      weight: latestAssessment?.weight ?? 0,
-      height: latestAssessment?.height ?? 1.65,
-      bodyFat: latestAssessment?.bodyFat,
-      muscleMass: latestAssessment?.muscleMass,
-      measures: latestAssessment
-        ? { ...latestAssessment.measures }
-        : {
-            armRight: 0,
-            armLeft: 0,
-            chest: 0,
-            waist: 0,
-            abdomen: 0,
-            hip: 0,
-            thighRight: 0,
-            thighLeft: 0,
-            calfRight: 0,
-            calfLeft: 0,
-          },
-    }
-    setStudent((prev) => {
-      const assessments = [...prev.assessments, blank].sort((a, b) =>
-        a.date.localeCompare(b.date),
+    const previous = student.assessments.find((a) => a.id === id)
+    setStudent((prev) => ({
+      ...prev,
+      assessments: prev.assessments.map((a) =>
+        a.id === id
+          ? {
+              ...a,
+              ...patch,
+              measures: patch.measures
+                ? { ...a.measures, ...patch.measures }
+                : a.measures,
+            }
+          : a,
+      ),
+    }))
+    try {
+      const updated = await updateAssessmentApi(student.id, id, patch)
+      setStudent((prev) => ({
+        ...prev,
+        assessments: prev.assessments.map((a) =>
+          a.id === updated.id ? updated : a,
+        ),
+      }))
+    } catch (error) {
+      if (previous) {
+        setStudent((prev) => ({
+          ...prev,
+          assessments: prev.assessments.map((a) =>
+            a.id === id ? previous : a,
+          ),
+        }))
+      }
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível salvar a avaliação',
       )
-      patchStudent(prev.id, { assessments })
-      return { ...prev, assessments }
-    })
-    setAssessmentIndex(0)
-    toast.success('Nova avaliação adicionada', {
-      description: 'Ajuste data, peso, altura e medidas.',
-    })
+    }
   }
 
-  function removeAssessment(id: string) {
-    setStudent((prev) => {
-      const assessments = prev.assessments.filter((a) => a.id !== id)
-      patchStudent(prev.id, { assessments })
-      return { ...prev, assessments }
-    })
+  async function addAssessment() {
+    try {
+      const created = await createAssessmentApi(student.id)
+      setStudent((prev) => ({
+        ...prev,
+        assessments: [created, ...prev.assessments],
+      }))
+      setAssessmentIndex(0)
+      toast.success('Nova avaliação adicionada', {
+        description: 'Ajuste data, peso, altura e medidas.',
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível adicionar a avaliação',
+      )
+    }
+  }
+
+  async function removeAssessment(id: string) {
+    const previous = student.assessments
+    setStudent((prev) => ({
+      ...prev,
+      assessments: prev.assessments.filter((a) => a.id !== id),
+    }))
     setAssessmentIndex(0)
-    toast.success('Avaliação removida')
+    try {
+      await deleteAssessmentApi(student.id, id)
+      toast.success('Avaliação removida')
+    } catch (error) {
+      setStudent((prev) => ({ ...prev, assessments: previous }))
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível remover a avaliação',
+      )
+    }
   }
 
   function addScheduleSlot() {
@@ -1057,23 +1131,40 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                         value={studentPaymentStatus(student)}
                         aria-label="Status financeiro do aluno"
                         onChange={(status) => {
-                          const next = setStudentFinancialStatus(
-                            student.id,
-                            status,
-                          )
-                          if (!next) {
-                            toast.error('Não foi possível atualizar o status')
-                            return
-                          }
-                          setStudent({ ...next })
-                          toast.success('Status financeiro atualizado', {
-                            description:
-                              status === 'pago'
-                                ? 'Pago'
-                                : status === 'pendente'
-                                  ? 'Pendente'
-                                  : 'Atrasado',
-                          })
+                          void (async () => {
+                            const sorted = [...student.payments].sort((a, b) =>
+                              b.dueDate.localeCompare(a.dueDate),
+                            )
+                            const target =
+                              sorted.find((p) => p.status !== 'pago') ??
+                              sorted[0]
+                            if (!target) {
+                              toast.error(
+                                'Não foi possível atualizar o status',
+                              )
+                              return
+                            }
+                            try {
+                              const updated = await updatePayment(target.id, {
+                                status,
+                              })
+                              syncPaymentInState(updated)
+                              toast.success('Status financeiro atualizado', {
+                                description:
+                                  status === 'pago'
+                                    ? 'Pago'
+                                    : status === 'pendente'
+                                      ? 'Pendente'
+                                      : 'Atrasado',
+                              })
+                            } catch (error) {
+                              toast.error(
+                                error instanceof Error
+                                  ? error.message
+                                  : 'Não foi possível atualizar o status',
+                              )
+                            }
+                          })()
                         }}
                       />
                     </dd>
@@ -1116,25 +1207,26 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                             }
                             onValueChange={(value) => {
                               if (!value) return
-                              const updated = setPaymentMethod(
-                                student.id,
-                                p.id,
-                                value as PaymentMethod,
-                              )
-                              if (!updated) {
-                                toast.error(
-                                  'Não foi possível atualizar a forma de pagamento',
-                                )
-                                return
-                              }
-                              const next = getStudent(student.id)
-                              if (next) setStudent({ ...next })
-                              toast.success(
-                                'Forma, status e data sincronizados',
-                                {
-                                  description: `${p.reference} · ${value} · ${formatShortDate(updated.paidAt!)}`,
-                                },
-                              )
+                              void (async () => {
+                                try {
+                                  const updated = await updatePayment(p.id, {
+                                    method: value as PaymentMethod,
+                                  })
+                                  syncPaymentInState(updated)
+                                  toast.success(
+                                    'Forma, status e data sincronizados',
+                                    {
+                                      description: `${p.reference} · ${value} · ${formatShortDate(updated.paidAt!)}`,
+                                    },
+                                  )
+                                } catch (error) {
+                                  toast.error(
+                                    error instanceof Error
+                                      ? error.message
+                                      : 'Não foi possível atualizar a forma de pagamento',
+                                  )
+                                }
+                              })()
                             }}
                           >
                             <SelectTrigger
@@ -1160,32 +1252,33 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                             value={p.status}
                             aria-label={`Status de ${p.reference}`}
                             onChange={(status: PaymentStatus) => {
-                              const updated = setPaymentStatus(
-                                student.id,
-                                p.id,
-                                status,
-                              )
-                              if (!updated) {
-                                toast.error(
-                                  'Não foi possível atualizar o status',
-                                )
-                                return
-                              }
-                              const next = getStudent(student.id)
-                              if (next) setStudent({ ...next })
-                              if (status === 'pago') {
-                                toast.success('Pagamento confirmado', {
-                                  description: `${p.reference} · ${updated.method} · ${formatShortDate(updated.paidAt!)}`,
-                                })
-                                return
-                              }
-                              toast.success('Status atualizado', {
-                                description: `${p.reference} · ${
-                                  status === 'pendente'
-                                    ? 'Pendente'
-                                    : 'Atrasado'
-                                }`,
-                              })
+                              void (async () => {
+                                try {
+                                  const updated = await updatePayment(p.id, {
+                                    status,
+                                  })
+                                  syncPaymentInState(updated)
+                                  if (status === 'pago') {
+                                    toast.success('Pagamento confirmado', {
+                                      description: `${p.reference} · ${updated.method} · ${formatShortDate(updated.paidAt!)}`,
+                                    })
+                                    return
+                                  }
+                                  toast.success('Status atualizado', {
+                                    description: `${p.reference} · ${
+                                      status === 'pendente'
+                                        ? 'Pendente'
+                                        : 'Atrasado'
+                                    }`,
+                                  })
+                                } catch (error) {
+                                  toast.error(
+                                    error instanceof Error
+                                      ? error.message
+                                      : 'Não foi possível atualizar o status',
+                                  )
+                                }
+                              })()
                             }}
                           />
                         </TableCell>
@@ -1196,31 +1289,33 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                               p.status === 'pago' ? (p.paidAt ?? '') : ''
                             }
                             onChange={(e) => {
-                              const updated = setPaymentPaidAt(
-                                student.id,
-                                p.id,
-                                e.target.value || null,
-                              )
-                              if (!updated) {
-                                toast.error(
-                                  'Não foi possível atualizar a data',
-                                )
-                                return
-                              }
-                              const next = getStudent(student.id)
-                              if (next) setStudent({ ...next })
-                              if (!e.target.value) {
-                                toast.success('Pagamento reaberto', {
-                                  description: `${p.reference} · Pendente`,
-                                })
-                                return
-                              }
-                              toast.success(
-                                'Forma, status e data sincronizados',
-                                {
-                                  description: `${p.reference} · ${updated.method} · ${formatShortDate(e.target.value)}`,
-                                },
-                              )
+                              const paidAt = e.target.value || null
+                              void (async () => {
+                                try {
+                                  const updated = await updatePayment(p.id, {
+                                    paidAt,
+                                  })
+                                  syncPaymentInState(updated)
+                                  if (!paidAt) {
+                                    toast.success('Pagamento reaberto', {
+                                      description: `${p.reference} · Pendente`,
+                                    })
+                                    return
+                                  }
+                                  toast.success(
+                                    'Forma, status e data sincronizados',
+                                    {
+                                      description: `${p.reference} · ${updated.method} · ${formatShortDate(paidAt)}`,
+                                    },
+                                  )
+                                } catch (error) {
+                                  toast.error(
+                                    error instanceof Error
+                                      ? error.message
+                                      : 'Não foi possível atualizar a data',
+                                  )
+                                }
+                              })()
                             }}
                             className="h-7 w-[150px]"
                             aria-label={`Data de pagamento de ${p.reference}`}
@@ -1371,8 +1466,12 @@ function EvolutionSlide({
 }: {
   evolution: Evolution
   isLatest: boolean
-  onUpdate: (id: string, key: keyof Evolution, value: string) => void
-  onRemove: (id: string) => void
+  onUpdate: (
+    id: string,
+    key: keyof Evolution,
+    value: string,
+  ) => void | Promise<void>
+  onRemove: (id: string) => void | Promise<void>
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -1459,8 +1558,8 @@ function AssessmentSlide({
     patch: Partial<Omit<PhysicalAssessment, 'measures'>> & {
       measures?: Partial<PhysicalAssessment['measures']>
     },
-  ) => void
-  onRemove: (id: string) => void
+  ) => void | Promise<void>
+  onRemove: (id: string) => void | Promise<void>
 }) {
   const imcValue = bmi(assessment.weight, assessment.height)
 

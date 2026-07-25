@@ -8,6 +8,7 @@ import {
   Mail,
   Pencil,
   PenLine,
+  Plus,
   Printer,
   RefreshCw,
   ScrollText,
@@ -25,6 +26,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Empty,
   EmptyDescription,
@@ -62,20 +71,24 @@ import {
   type Contract,
   type ContractStatus,
   type PaymentMethod,
+  type Plan,
   type Student,
   contractStatusLabel,
   formatCurrency,
   formatShortDate,
-  getStudentContracts,
-  patchContract,
   paymentMethods,
-  plans,
   planPeriodLabel,
-  removeContract,
-  renewContract,
-  rescindContract,
-  sendContractForSignature,
+  studentChargedValue,
+  toIsoDate,
 } from '@/lib/data'
+import {
+  contractAction,
+  createContract,
+  deleteContract,
+  fetchStudentContracts,
+  updateContract,
+} from '@/lib/contracts-api'
+import { fetchPlans } from '@/lib/settings-api'
 import { cn } from '@/lib/utils'
 
 function ContractStatusBadge({ status }: { status: ContractStatus }) {
@@ -151,20 +164,147 @@ type StudentContractsPanelProps = {
 }
 
 export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
-  const [tick, setTick] = useState(0)
+  const [list, setList] = useState<Contract[]>([])
+  const [plans, setPlans] = useState<Plan[]>([])
+  const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState<EditForm | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createPlanId, setCreatePlanId] = useState(student.planId)
+  const [createDiscount, setCreateDiscount] = useState(student.discountPercent)
+  const [createStart, setCreateStart] = useState(toIsoDate(new Date()))
+  const [createEnd, setCreateEnd] = useState(() => {
+    const end = new Date()
+    end.setMonth(end.getMonth() + 6)
+    return toIsoDate(end)
+  })
+  const [createDueDay, setCreateDueDay] = useState(student.dueDay)
+  const [createMethod, setCreateMethod] = useState<PaymentMethod>(
+    student.paymentMethod,
+  )
+  const [createResponsible, setCreateResponsible] = useState(student.name)
 
-  const list = useMemo(() => {
-    void tick
-    return getStudentContracts(student.id)
-  }, [student.id, tick])
+  const createPlan = useMemo(
+    () => plans.find((p) => p.id === createPlanId),
+    [plans, createPlanId],
+  )
+  const createMonthlyValue = useMemo(
+    () => studentChargedValue(createPlan, createDiscount),
+    [createPlan, createDiscount],
+  )
 
-  const selected = useMemo(() => {
-    void tick
-    return list.find((c) => c.id === selectedId) ?? null
-  }, [list, selectedId, tick])
+  function resetCreateForm() {
+    setCreatePlanId(student.planId || plans[0]?.id || '')
+    setCreateDiscount(student.discountPercent)
+    setCreateStart(toIsoDate(new Date()))
+    const end = new Date()
+    end.setMonth(end.getMonth() + 6)
+    setCreateEnd(toIsoDate(end))
+    setCreateDueDay(student.dueDay)
+    setCreateMethod(student.paymentMethod)
+    setCreateResponsible(student.name)
+  }
+
+  function openCreateDialog() {
+    resetCreateForm()
+    setCreateOpen(true)
+  }
+
+  async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!createPlanId) {
+      toast.error('Selecione um plano')
+      return
+    }
+    if (!createStart || !createEnd) {
+      toast.error('Informe as datas de início e término')
+      return
+    }
+    if (createEnd < createStart) {
+      toast.error('A data de término deve ser após o início')
+      return
+    }
+
+    setCreating(true)
+    try {
+      const plan = plans.find((p) => p.id === createPlanId)
+      const created = await createContract(student.id, {
+        planId: createPlanId,
+        planLabel: plan
+          ? `${planPeriodLabel[plan.period]} · ${plan.frequencyLabel}`
+          : undefined,
+        startDate: createStart,
+        endDate: createEnd,
+        monthlyValue: createMonthlyValue,
+        discountPercent: Math.min(100, Math.max(0, createDiscount)),
+        dueDay: Math.min(28, Math.max(1, createDueDay)),
+        paymentMethod: createMethod,
+        financialResponsible: createResponsible.trim() || student.name,
+        status: 'rascunho',
+      })
+      setCreateOpen(false)
+      await loadContracts()
+      setSelectedId(created.id)
+      setEditing(false)
+      notify('Contrato criado', created.number)
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível criar o contrato',
+      )
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function loadContracts() {
+    const data = await fetchStudentContracts(student.id)
+    setList(data)
+    return data
+  }
+
+  useEffect(() => {
+    void fetchPlans()
+      .then((data) => {
+        setPlans(data)
+        setCreatePlanId((current) => current || student.planId || data[0]?.id || '')
+      })
+      .catch(() => {
+        toast.error('Não foi possível carregar os planos')
+      })
+  }, [student.planId])
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    fetchStudentContracts(student.id)
+      .then((data) => {
+        if (!cancelled) setList(data)
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          toast.error(
+            err instanceof Error
+              ? err.message
+              : 'Não foi possível carregar os contratos',
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [student.id])
+
+  const selected = useMemo(
+    () => list.find((c) => c.id === selectedId) ?? null,
+    [list, selectedId],
+  )
 
   useEffect(() => {
     if (!selected) {
@@ -175,17 +315,8 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     if (!editing) setForm(toEditForm(selected))
   }, [selected, editing])
 
-  function refresh() {
-    setTick((n) => n + 1)
-  }
-
   function notify(title: string, description?: string) {
-    toast.success(title, {
-      description:
-        description ??
-        'A alteração será salva quando o banco de dados for conectado.',
-    })
-    refresh()
+    toast.success(title, { description })
   }
 
   function updateForm<K extends keyof EditForm>(key: K, value: EditForm[K]) {
@@ -207,11 +338,10 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     })
   }
 
-  function handleSaveEdit() {
+  async function handleSaveEdit() {
     if (!selected || !form) return
-    const next = patchContract(
-      selected.id,
-      {
+    try {
+      const next = await updateContract(selected.id, {
         planId: form.planId,
         planLabel: form.planLabel,
         startDate: form.startDate,
@@ -219,91 +349,117 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
         status: form.status,
         monthlyValue: Math.max(0, form.monthlyValue),
         discountPercent: Math.min(100, Math.max(0, form.discountPercent)),
-        discountNote: form.discountNote.trim() || undefined,
+        discountNote: form.discountNote.trim() || null,
         dueDay: Math.min(28, Math.max(1, form.dueDay)),
         paymentMethod: form.paymentMethod,
         financialResponsible: form.financialResponsible.trim(),
         lateFeePercent: Math.max(0, form.lateFeePercent),
         interestPercent: Math.max(0, form.interestPercent),
-        version: selected.version + 1,
-        previousVersions: [
-          {
-            version: selected.version,
-            changedAt: selected.updatedAt,
-            summary: 'Edição manual dos dados do contrato',
-          },
-          ...selected.previousVersions,
-        ],
-      },
-      'Contrato editado',
-    )
-    if (!next) {
-      toast.error('Não foi possível salvar o contrato')
-      return
+        historyAction: 'Contrato editado',
+      })
+      setEditing(false)
+      await loadContracts()
+      notify('Contrato atualizado', next.number)
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível salvar o contrato',
+      )
     }
-    setEditing(false)
-    notify('Contrato atualizado', next.number)
   }
 
-  function handleDelete(contract: Contract) {
+  async function handleDelete(contract: Contract) {
     const ok = window.confirm(
       `Apagar o contrato ${contract.number}? Esta ação não pode ser desfeita.`,
     )
     if (!ok) return
-    const removed = removeContract(contract.id)
-    if (!removed) {
-      toast.error('Não foi possível apagar o contrato')
-      return
+    try {
+      await deleteContract(contract.id)
+      setSelectedId(null)
+      setEditing(false)
+      await loadContracts()
+      notify('Contrato apagado', contract.number)
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível apagar o contrato',
+      )
     }
-    setSelectedId(null)
-    setEditing(false)
-    notify('Contrato apagado', contract.number)
   }
 
-  function handleSendSignature(contract: Contract) {
-    const next = sendContractForSignature(contract.id)
-    if (!next) {
-      toast.error('Não foi possível enviar o contrato')
-      return
+  async function handleSendSignature(contract: Contract) {
+    try {
+      const next = await contractAction(contract.id, 'send')
+      await loadContracts()
+      notify(
+        'Enviado para assinatura',
+        `${next.number} · ${student.email || 'sem e-mail'}`,
+      )
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível enviar o contrato',
+      )
     }
-    notify(
-      'Enviado para assinatura',
-      `${next.number} · ${student.email || 'sem e-mail'}`,
-    )
   }
 
-  function handleRenew(contract: Contract) {
-    const next = renewContract(contract.id)
-    if (!next) {
-      toast.error('Não foi possível renovar o contrato')
-      return
+  async function handleRenew(contract: Contract) {
+    try {
+      const next = await contractAction(contract.id, 'renew')
+      await loadContracts()
+      setSelectedId(next.id)
+      setEditing(false)
+      notify('Contrato renovado', `Novo rascunho ${next.number}`)
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível renovar o contrato',
+      )
     }
-    setSelectedId(next.id)
-    setEditing(false)
-    notify('Contrato renovado', `Novo rascunho ${next.number}`)
   }
 
-  function handleRescind(contract: Contract) {
-    const next = rescindContract(contract.id)
-    if (!next) {
-      toast.error('Não foi possível rescindir o contrato')
-      return
+  async function handleRescind(contract: Contract) {
+    try {
+      const next = await contractAction(contract.id, 'rescind')
+      await loadContracts()
+      notify('Contrato rescindido', next.number)
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível rescindir o contrato',
+      )
     }
-    notify('Contrato rescindido', next.number)
   }
 
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Contratos</CardTitle>
-          <CardDescription>
-            Clique em um contrato para ver, editar ou apagar · histórico de{' '}
-            {student.name.split(' ')[0]}
-          </CardDescription>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
+          <div className="flex flex-col gap-1.5">
+            <CardTitle>Contratos</CardTitle>
+            <CardDescription>
+              Clique em um contrato para ver, editar ou apagar · histórico de{' '}
+              {student.name.split(' ')[0]}
+            </CardDescription>
+          </div>
+          <Button size="sm" onClick={openCreateDialog}>
+            <Plus data-icon="inline-start" />
+            Novo contrato
+          </Button>
         </CardHeader>
         <CardContent>
-          {list.length === 0 ? (
+          {loading ? (
+            <Empty className="border-0 py-8">
+              <EmptyHeader>
+                <EmptyTitle>Carregando contratos…</EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          ) : list.length === 0 ? (
             <Empty className="border-0 py-8">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
@@ -311,9 +467,13 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                 </EmptyMedia>
                 <EmptyTitle>Nenhum contrato</EmptyTitle>
                 <EmptyDescription>
-                  Os contratos deste aluno aparecerão aqui.
+                  Crie o primeiro contrato deste aluno para começar.
                 </EmptyDescription>
               </EmptyHeader>
+              <Button size="sm" onClick={openCreateDialog}>
+                <Plus data-icon="inline-start" />
+                Novo contrato
+              </Button>
             </Empty>
           ) : (
             <Table>
@@ -356,6 +516,162 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open)
+          if (!open) resetCreateForm()
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Novo contrato</DialogTitle>
+            <DialogDescription>
+              O contrato será criado como rascunho para {student.name}.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => void handleCreate(e)}>
+            <FieldGroup>
+              <Field>
+                <FieldLabel>Plano</FieldLabel>
+                <Select
+                  value={createPlanId || null}
+                  onValueChange={(v) => {
+                    if (v) setCreatePlanId(v)
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Selecione um plano" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {plans.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {planPeriodLabel[p.period]} · {p.frequencyLabel} —{' '}
+                          {formatCurrency(p.price)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <div className="grid grid-cols-2 gap-4">
+                <Field>
+                  <FieldLabel htmlFor="contract-start">Início</FieldLabel>
+                  <Input
+                    id="contract-start"
+                    type="date"
+                    value={createStart}
+                    onChange={(e) => setCreateStart(e.target.value)}
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="contract-end">Término</FieldLabel>
+                  <Input
+                    id="contract-end"
+                    type="date"
+                    value={createEnd}
+                    onChange={(e) => setCreateEnd(e.target.value)}
+                    required
+                  />
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Field>
+                  <FieldLabel htmlFor="contract-discount">
+                    Desconto (%)
+                  </FieldLabel>
+                  <Input
+                    id="contract-discount"
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={createDiscount}
+                    onChange={(e) =>
+                      setCreateDiscount(
+                        Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                      )
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel>Valor mensal</FieldLabel>
+                  <Input
+                    value={formatCurrency(createMonthlyValue)}
+                    readOnly
+                    className="bg-muted"
+                  />
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Field>
+                  <FieldLabel htmlFor="contract-due">Dia de vencimento</FieldLabel>
+                  <Input
+                    id="contract-due"
+                    type="number"
+                    min={1}
+                    max={28}
+                    value={createDueDay}
+                    onChange={(e) =>
+                      setCreateDueDay(
+                        Math.min(28, Math.max(1, Number(e.target.value) || 1)),
+                      )
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel>Forma de pagamento</FieldLabel>
+                  <Select
+                    value={createMethod}
+                    onValueChange={(v) => {
+                      if (v) setCreateMethod(v as PaymentMethod)
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {paymentMethods.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {m}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+              <Field>
+                <FieldLabel htmlFor="contract-responsible">
+                  Responsável financeiro
+                </FieldLabel>
+                <Input
+                  id="contract-responsible"
+                  value={createResponsible}
+                  onChange={(e) => setCreateResponsible(e.target.value)}
+                  placeholder={student.name}
+                />
+              </Field>
+            </FieldGroup>
+            <DialogFooter className="mt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateOpen(false)}
+                disabled={creating}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={creating || !createPlanId}>
+                {creating ? 'Criando…' : 'Criar contrato'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Sheet
         open={Boolean(selected)}
@@ -402,7 +718,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                         size="sm"
                         variant="outline"
                         className="text-destructive hover:text-destructive"
-                        onClick={() => handleDelete(selected)}
+                        onClick={() => void handleDelete(selected)}
                       >
                         <Trash2 data-icon="inline-start" />
                         Apagar
@@ -438,7 +754,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                           selected.status === 'encerrado' ||
                           selected.status === 'cancelado'
                         }
-                        onClick={() => handleSendSignature(selected)}
+                        onClick={() => void handleSendSignature(selected)}
                       >
                         <PenLine data-icon="inline-start" />
                         Enviar assinatura
@@ -463,7 +779,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                           selected.status === 'cancelado' ||
                           selected.status === 'rascunho'
                         }
-                        onClick={() => handleRenew(selected)}
+                        onClick={() => void handleRenew(selected)}
                       >
                         <RefreshCw data-icon="inline-start" />
                         Renovar
@@ -476,7 +792,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                           selected.status === 'cancelado' ||
                           selected.status === 'encerrado'
                         }
-                        onClick={() => handleRescind(selected)}
+                        onClick={() => void handleRescind(selected)}
                       >
                         <XCircle data-icon="inline-start" />
                         Rescindir
@@ -484,7 +800,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                     </>
                   ) : (
                     <>
-                      <Button size="sm" onClick={handleSaveEdit}>
+                      <Button size="sm" onClick={() => void handleSaveEdit()}>
                         Salvar alterações
                       </Button>
                       <Button

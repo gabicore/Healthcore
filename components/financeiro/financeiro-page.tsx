@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   Area,
@@ -47,26 +47,22 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
-  activeStudentsCount,
-  createExpense,
   expenseCategoryLabel,
-  expenses,
-  expensesByCategory,
-  expectedStudentRevenue,
   formatCurrency,
-  monthlyRevenue,
-  openPayments,
-  overduePayments,
-  paidExpensesTotal,
-  patchExpense,
-  pendingExpensesTotal,
-  removeExpense,
-  revenueByMonth,
-  setExpenseStatus,
-  totalExpenses,
+  toIsoDate,
+  type Expense,
   type ExpenseCategory,
   type ExpenseStatus,
+  type Student,
 } from '@/lib/data'
+import {
+  createExpense,
+  deleteExpense,
+  fetchExpenses,
+  updateExpense,
+} from '@/lib/expenses-api'
+import { fetchStudents } from '@/lib/students-api'
+import type { UpdateExpenseInput } from '@/lib/validations/expense'
 import { cn } from '@/lib/utils'
 
 const categoryOptions = (
@@ -85,6 +81,75 @@ const revenueConfig = {
 const expenseChartConfig = {
   amount: { label: 'Valor', color: 'var(--chart-4)' },
 } satisfies ChartConfig
+
+const shortMonthLabels = [
+  'Jan',
+  'Fev',
+  'Mar',
+  'Abr',
+  'Mai',
+  'Jun',
+  'Jul',
+  'Ago',
+  'Set',
+  'Out',
+  'Nov',
+  'Dez',
+] as const
+
+function allPaymentRows(students: Student[]) {
+  return students.flatMap((student) =>
+    student.payments.map((payment) => ({ student, payment })),
+  )
+}
+
+function monthlyRevenueFrom(
+  students: Student[],
+  year: number,
+  month: number,
+) {
+  const prefix = `${year}-${String(month).padStart(2, '0')}`
+  return allPaymentRows(students)
+    .filter(
+      (row) =>
+        row.payment.status === 'pago' &&
+        row.payment.paidAt?.startsWith(prefix),
+    )
+    .reduce((sum, row) => sum + row.payment.amount, 0)
+}
+
+function revenueByMonthFrom(
+  students: Student[],
+  monthsBack = 6,
+  today = new Date(),
+) {
+  const points: { month: string; receita: number; key: string }[] = []
+  for (let i = monthsBack - 1; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
+    const year = d.getFullYear()
+    const month = d.getMonth() + 1
+    points.push({
+      month: shortMonthLabels[d.getMonth()],
+      receita: monthlyRevenueFrom(students, year, month),
+      key: `${year}-${String(month).padStart(2, '0')}`,
+    })
+  }
+  return points
+}
+
+function expensesByCategoryFrom(expenseList: Expense[]) {
+  const map = new Map<ExpenseCategory, number>()
+  for (const expense of expenseList) {
+    map.set(expense.category, (map.get(expense.category) ?? 0) + expense.amount)
+  }
+  return [...map.entries()]
+    .map(([category, amount]) => ({
+      category,
+      label: expenseCategoryLabel[category],
+      amount,
+    }))
+    .sort((a, b) => b.amount - a.amount)
+}
 
 function StatCard({
   title,
@@ -134,60 +199,111 @@ function StatCard({
 
 export function FinanceiroPage() {
   const today = useMemo(() => new Date(), [])
-  const [version, setVersion] = useState(0)
+  const [expenses, setExpenses] = useState<Expense[]>([])
+  const [students, setStudents] = useState<Student[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    Promise.all([fetchExpenses(), fetchStudents()])
+      .then(([expenseData, studentData]) => {
+        if (cancelled) return
+        setExpenses(expenseData)
+        setStudents(studentData)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : 'Não foi possível carregar o financeiro',
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const monthLabel = today.toLocaleDateString('pt-BR', {
     month: 'long',
     year: 'numeric',
   })
 
-  const studentRevenue = useMemo(() => {
-    void version
-    return monthlyRevenue(today.getFullYear(), today.getMonth() + 1)
-  }, [version, today])
+  const studentRevenue = useMemo(
+    () => monthlyRevenueFrom(students, today.getFullYear(), today.getMonth() + 1),
+    [students, today],
+  )
 
-  const expectedRevenue = useMemo(() => expectedStudentRevenue(), [])
-  const activeCount = useMemo(() => activeStudentsCount(), [])
+  const expectedRevenue = useMemo(
+    () =>
+      students
+        .filter((s) => s.active)
+        .reduce((sum, s) => sum + s.monthlyValue, 0),
+    [students],
+  )
 
-  const expenseList = useMemo(() => {
-    void version
-    return [...expenses].sort((a, b) => a.dueDay - b.dueDay)
-  }, [version])
+  const activeCount = useMemo(
+    () => students.filter((s) => s.active).length,
+    [students],
+  )
 
-  const expensesTotal = useMemo(() => {
-    void version
-    return totalExpenses()
-  }, [version])
+  const expenseList = useMemo(
+    () => [...expenses].sort((a, b) => a.dueDay - b.dueDay),
+    [expenses],
+  )
 
-  const expensesPaid = useMemo(() => {
-    void version
-    return paidExpensesTotal()
-  }, [version])
+  const expensesTotal = useMemo(
+    () => expenses.reduce((sum, e) => sum + e.amount, 0),
+    [expenses],
+  )
 
-  const expensesPending = useMemo(() => {
-    void version
-    return pendingExpensesTotal()
-  }, [version])
+  const expensesPaid = useMemo(
+    () =>
+      expenses
+        .filter((e) => e.status === 'pago')
+        .reduce((sum, e) => sum + e.amount, 0),
+    [expenses],
+  )
 
-  const byCategory = useMemo(() => {
-    void version
-    return expensesByCategory()
-  }, [version])
+  const expensesPending = useMemo(
+    () =>
+      expenses
+        .filter((e) => e.status === 'pendente')
+        .reduce((sum, e) => sum + e.amount, 0),
+    [expenses],
+  )
 
-  const openReceivables = useMemo(() => {
-    void version
-    return openPayments()
-  }, [version])
+  const byCategory = useMemo(
+    () => expensesByCategoryFrom(expenses),
+    [expenses],
+  )
 
-  const overdue = useMemo(() => {
-    void version
-    return overduePayments()
-  }, [version])
+  const openReceivables = useMemo(
+    () =>
+      allPaymentRows(students).filter(
+        (row) =>
+          row.payment.status === 'pendente' ||
+          row.payment.status === 'atrasado',
+      ),
+    [students],
+  )
 
-  const chartData = useMemo(() => {
-    void version
-    return revenueByMonth(6, today)
-  }, [version, today])
+  const overdue = useMemo(
+    () =>
+      allPaymentRows(students).filter(
+        (row) => row.payment.status === 'atrasado',
+      ),
+    [students],
+  )
+
+  const chartData = useMemo(
+    () => revenueByMonthFrom(students, 6, today),
+    [students, today],
+  )
 
   const openTotal = openReceivables.reduce(
     (sum, row) => sum + row.payment.amount,
@@ -200,65 +316,85 @@ export function FinanceiroPage() {
   const balance = studentRevenue - expensesPaid
   const projectedBalance = expectedRevenue - expensesTotal
 
-  function refresh() {
-    setVersion((v) => v + 1)
-  }
-
-  function handleExpenseStatus(id: string, status: ExpenseStatus, name: string) {
-    const updated = setExpenseStatus(id, status)
-    if (!updated) {
-      toast.error('Não foi possível atualizar a conta')
-      return
-    }
-    refresh()
-    toast.success(
-      status === 'pago' ? 'Conta marcada como paga' : 'Conta reaberta',
-      { description: name },
-    )
-  }
-
-  function handleExpensePatch(
+  async function handleExpenseStatus(
     id: string,
-    patch: Parameters<typeof patchExpense>[1],
+    status: ExpenseStatus,
+    name: string,
+  ) {
+    try {
+      const updated = await updateExpense(
+        id,
+        status === 'pago'
+          ? { status: 'pago', paidAt: toIsoDate(new Date()) }
+          : { status: 'pendente', paidAt: null },
+      )
+      setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)))
+      toast.success(
+        status === 'pago' ? 'Conta marcada como paga' : 'Conta reaberta',
+        { description: name },
+      )
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível atualizar a conta',
+      )
+    }
+  }
+
+  async function handleExpensePatch(
+    id: string,
+    patch: UpdateExpenseInput,
     label: string,
   ) {
-    const updated = patchExpense(id, patch)
-    if (!updated) {
-      toast.error('Não foi possível atualizar')
-      return
+    try {
+      const updated = await updateExpense(id, patch)
+      setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)))
+      toast.success(`${label} atualizado`, { duration: 1800 })
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error ? err.message : 'Não foi possível atualizar',
+      )
     }
-    refresh()
-    toast.success(`${label} atualizado`, {
-      description:
-        'A alteração será salva quando o banco de dados for conectado.',
-      duration: 1800,
-    })
   }
 
-  function handleAddExpense() {
-    const expense = createExpense({
-      name: 'Nova conta',
-      category: 'outros',
-      amount: 0,
-      dueDay: 1,
-      status: 'pendente',
-      recurring: true,
-    })
-    refresh()
-    toast.success('Conta adicionada', {
-      description: 'Clique nos campos para editar os detalhes.',
-    })
-    return expense
+  async function handleAddExpense() {
+    try {
+      const expense = await createExpense({
+        name: 'Nova conta',
+        category: 'outros',
+        amount: 0,
+        dueDay: 1,
+        status: 'pendente',
+        recurring: true,
+      })
+      setExpenses((prev) => [...prev, expense])
+      toast.success('Conta adicionada', {
+        description: 'Clique nos campos para editar os detalhes.',
+      })
+      return expense
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível adicionar a conta',
+      )
+      return null
+    }
   }
 
-  function handleRemoveExpense(id: string, name: string) {
-    const ok = removeExpense(id)
-    if (!ok) {
-      toast.error('Não foi possível remover a conta')
-      return
+  async function handleRemoveExpense(id: string, name: string) {
+    try {
+      await deleteExpense(id)
+      setExpenses((prev) => prev.filter((e) => e.id !== id))
+      toast.success('Conta removida', { description: name })
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível remover a conta',
+      )
     }
-    refresh()
-    toast.success('Conta removida', { description: name })
   }
 
   return (
@@ -274,6 +410,10 @@ export function FinanceiroPage() {
       </PageHeader>
 
       <div className="flex flex-col gap-6 p-4 md:p-6">
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Carregando financeiro…</p>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             title="Entrada dos alunos"
@@ -412,7 +552,7 @@ export function FinanceiroPage() {
                 Clique para editar · adicione ou remova contas do mês
               </CardDescription>
             </div>
-            <Button type="button" size="sm" onClick={handleAddExpense}>
+            <Button type="button" size="sm" onClick={() => void handleAddExpense()}>
               <Plus data-icon="inline-start" />
               Adicionar conta
             </Button>
@@ -437,14 +577,20 @@ export function FinanceiroPage() {
                     colSpan={6}
                     className="py-10 text-center text-muted-foreground"
                   >
-                    Nenhuma conta cadastrada.{' '}
-                    <button
-                      type="button"
-                      className="font-medium text-foreground underline-offset-4 hover:underline"
-                      onClick={handleAddExpense}
-                    >
-                      Adicionar a primeira
-                    </button>
+                    {loading ? (
+                      'Carregando contas…'
+                    ) : (
+                      <>
+                        Nenhuma conta cadastrada.{' '}
+                        <button
+                          type="button"
+                          className="font-medium text-foreground underline-offset-4 hover:underline"
+                          onClick={() => void handleAddExpense()}
+                        >
+                          Adicionar a primeira
+                        </button>
+                      </>
+                    )}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -457,7 +603,7 @@ export function FinanceiroPage() {
                           className="font-medium"
                           onSave={(name) => {
                             if (!name) return
-                            handleExpensePatch(
+                            void handleExpensePatch(
                               expense.id,
                               { name },
                               'Descrição',
@@ -469,9 +615,9 @@ export function FinanceiroPage() {
                           emptyLabel="Observação"
                           className="text-xs text-muted-foreground"
                           onSave={(notes) =>
-                            handleExpensePatch(
+                            void handleExpensePatch(
                               expense.id,
-                              { notes: notes || undefined },
+                              { notes: notes || null },
                               'Observação',
                             )
                           }
@@ -485,7 +631,7 @@ export function FinanceiroPage() {
                         displayValue={expenseCategoryLabel[expense.category]}
                         options={categoryOptions}
                         onSave={(category) =>
-                          handleExpensePatch(
+                          void handleExpensePatch(
                             expense.id,
                             { category: category as ExpenseCategory },
                             'Categoria',
@@ -503,7 +649,7 @@ export function FinanceiroPage() {
                             28,
                             Math.max(1, Number(raw) || 1),
                           )
-                          handleExpensePatch(
+                          void handleExpensePatch(
                             expense.id,
                             { dueDay },
                             'Vencimento',
@@ -519,7 +665,11 @@ export function FinanceiroPage() {
                         className="font-medium tabular-nums"
                         onSave={(raw) => {
                           const amount = Math.max(0, Number(raw) || 0)
-                          handleExpensePatch(expense.id, { amount }, 'Valor')
+                          void handleExpensePatch(
+                            expense.id,
+                            { amount },
+                            'Valor',
+                          )
                         }}
                       />
                     </TableCell>
@@ -538,7 +688,7 @@ export function FinanceiroPage() {
                             : 'text-chart-3',
                         )}
                         onSave={(status) =>
-                          handleExpenseStatus(
+                          void handleExpenseStatus(
                             expense.id,
                             status as ExpenseStatus,
                             expense.name,
@@ -554,7 +704,7 @@ export function FinanceiroPage() {
                         className="text-muted-foreground hover:text-destructive"
                         aria-label={`Excluir ${expense.name}`}
                         onClick={() =>
-                          handleRemoveExpense(expense.id, expense.name)
+                          void handleRemoveExpense(expense.id, expense.name)
                         }
                       >
                         <Trash2 className="size-3.5" />

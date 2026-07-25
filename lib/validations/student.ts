@@ -50,9 +50,37 @@ export const createStudentSchema = z.object({
   schedule: z.array(scheduleSlotSchema).optional().default([]),
 })
 
-export const updateStudentSchema = createStudentSchema.partial().extend({
+/** PATCH parcial: sem `.default()` — defaults do create zeravam campos omitidos. */
+export const updateStudentSchema = z.object({
   name: z.string().min(2).optional(),
+  birthDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  sex: sexSchema.optional(),
+  cpf: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.union([z.string().email(), z.literal('')]).optional(),
+  address: z.string().optional(),
+  emergencyContact: z.string().optional(),
+  active: z.boolean().optional(),
+  since: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  objective: z.string().optional(),
+  pathologies: z.string().optional(),
+  injuries: z.string().optional(),
+  surgeries: z.string().optional(),
+  restrictions: z.string().optional(),
+  medications: z.string().optional(),
+  notes: z.string().optional(),
   planId: z.string().min(1).optional(),
+  monthlyValue: z.number().nonnegative().optional(),
+  discountPercent: z.number().int().min(0).max(100).optional(),
+  dueDay: z.number().int().min(1).max(28).optional(),
+  paymentMethod: paymentMethodSchema.optional(),
+  schedule: z.array(scheduleSlotSchema).optional(),
 })
 
 export type CreateStudentInput = z.input<typeof createStudentSchema>

@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -26,7 +27,8 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { studio } from '@/lib/data'
+import { studio as studioFallback } from '@/lib/data'
+import { fetchStudio } from '@/lib/settings-api'
 
 const nav = [
   { title: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -39,6 +41,21 @@ const nav = [
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const [studio, setStudio] = useState(studioFallback)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchStudio()
+      .then((data) => {
+        if (!cancelled) setStudio(data)
+      })
+      .catch(() => {
+        /* mantém fallback do mock */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <Sidebar>

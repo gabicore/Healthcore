@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
-import { getStudent } from '@/lib/data'
+
 import { StudentProfile } from '@/components/students/student-profile'
+import { getStudentById } from '@/lib/students-service'
 
 export default async function StudentPage({
   params,
@@ -8,7 +9,7 @@ export default async function StudentPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const student = getStudent(id)
+  const student = await getStudentById(id)
 
   if (!student) {
     notFound()

@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -36,11 +37,14 @@ import {
   planPeriodLabel,
   studentChargedValue,
 } from '@/lib/data'
+import { createStudent } from '@/lib/students-api'
 
 const periodOrder = ['semestral', 'trimestral', 'mensal'] as const
 
 export function NewStudentDialog() {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [planId, setPlanId] = useState('sem-2x')
   const [discountPercent, setDiscountPercent] = useState(0)
 
@@ -55,17 +59,54 @@ export function NewStudentDialog() {
     setDiscountPercent(0)
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    setOpen(false)
-    toast.success('Aluno cadastrado', {
-      description: selectedPlan
-        ? `Plano ${selectedPlan.name} · valor final ${formatCurrency(finalValue)}${
-            discountPercent > 0 ? ` (−${discountPercent}%)` : ''
-          }. Persistência quando o banco for conectado.`
-        : 'O cadastro será salvo quando o banco de dados for conectado.',
-    })
-    resetForm()
+    const form = e.currentTarget
+    const formData = new FormData(form)
+    const name = String(formData.get('name') ?? '').trim()
+    const cpf = String(formData.get('cpf') ?? '').trim()
+    const phone = String(formData.get('phone') ?? '').trim()
+    const birthDate = String(formData.get('birth') ?? '').trim()
+    const email = String(formData.get('email') ?? '').trim()
+
+    if (!name || !birthDate) {
+      toast.error('Nome e data de nascimento são obrigatórios')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const created = await createStudent({
+        name,
+        birthDate,
+        cpf,
+        phone,
+        email,
+        planId,
+        discountPercent,
+        monthlyValue: finalValue,
+        sex: 'Feminino',
+      })
+      setOpen(false)
+      resetForm()
+      toast.success('Aluno cadastrado', {
+        description: selectedPlan
+          ? `Plano ${selectedPlan.name} · valor final ${formatCurrency(finalValue)}${
+              discountPercent > 0 ? ` (−${discountPercent}%)` : ''
+            }`
+          : undefined,
+      })
+      router.push(`/alunos/${created.id}`)
+      router.refresh()
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível cadastrar o aluno',
+      )
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -96,25 +137,39 @@ export function NewStudentDialog() {
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="name">Nome completo</FieldLabel>
-              <Input id="name" placeholder="Ex.: Maria da Silva" required />
+              <Input
+                id="name"
+                name="name"
+                placeholder="Ex.: Maria da Silva"
+                required
+              />
             </Field>
             <Field>
               <FieldLabel htmlFor="cpf">CPF</FieldLabel>
-              <Input id="cpf" placeholder="000.000.000-00" />
+              <Input id="cpf" name="cpf" placeholder="000.000.000-00" />
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field>
                 <FieldLabel htmlFor="phone">Telefone</FieldLabel>
-                <Input id="phone" placeholder="(11) 90000-0000" />
+                <Input
+                  id="phone"
+                  name="phone"
+                  placeholder="(11) 90000-0000"
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="birth">Nascimento</FieldLabel>
-                <Input id="birth" type="date" />
+                <Input id="birth" name="birth" type="date" required />
               </Field>
             </div>
             <Field>
               <FieldLabel htmlFor="email">E-mail</FieldLabel>
-              <Input id="email" type="email" placeholder="email@exemplo.com" />
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                placeholder="email@exemplo.com"
+              />
             </Field>
             <Field>
               <FieldLabel>Plano</FieldLabel>
@@ -182,10 +237,13 @@ export function NewStudentDialog() {
               type="button"
               variant="outline"
               onClick={() => setOpen(false)}
+              disabled={saving}
             >
               Cancelar
             </Button>
-            <Button type="submit">Cadastrar aluno</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? 'Salvando…' : 'Cadastrar aluno'}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -1,0 +1,447 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum StudioPlanTier {
+  Essencial
+  Profissional
+  Studio
+}
+
+enum Sex {
+  Feminino
+  Masculino
+  Outro
+}
+
+enum Weekday {
+  Segunda
+  Terca
+  Quarta
+  Quinta
+  Sexta
+  Sabado
+}
+
+enum PlanPeriod {
+  mensal
+  trimestral
+  semestral
+}
+
+enum PaymentStatus {
+  pago
+  pendente
+  atrasado
+}
+
+enum PaymentMethod {
+  PIX
+  CartaoCredito
+  Boleto
+  Dinheiro
+}
+
+enum AttendanceStatus {
+  agendada
+  presente
+  falta
+  reposicao
+  cancelada
+}
+
+enum ClassSessionType {
+  fixa
+  avulsa
+  reposicao
+  experimental
+}
+
+enum ContractStatus {
+  rascunho
+  pendente_assinatura
+  ativo
+  encerrado
+  cancelado
+}
+
+enum ExpenseCategory {
+  aluguel
+  contas
+  pessoal
+  material
+  software
+  outros
+}
+
+enum ExpenseStatus {
+  pago
+  pendente
+}
+
+enum TimePeriod {
+  manha
+  tarde
+}
+
+enum CampaignType {
+  aniversarios
+  eventos
+  promocoes
+  marketing
+  whatsapp
+  email
+  fidelizacao
+  reativacao
+}
+
+enum CampaignChannel {
+  whatsapp
+  email
+  sms
+  interno
+}
+
+enum CampaignStatus {
+  rascunho
+  agendada
+  em_andamento
+  pausada
+  finalizada
+}
+
+enum CampaignAudience {
+  todos
+  ativos
+  inativos
+  aniversariantes
+  inadimplentes
+  responsaveis
+}
+
+enum CampaignAutomation {
+  aniversario
+  lembrete
+  pos_venda
+  reativacao
+}
+
+model Studio {
+  id        String         @id @default(cuid())
+  name      String
+  owner     String
+  email     String
+  phone     String
+  plan      StudioPlanTier @default(Profissional)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  plans          Plan[]
+  professionals  Professional[]
+  studioHours    StudioHour[]
+  timeSlots      TimeSlot[]
+  students       Student[]
+  expenses       Expense[]
+  campaigns      Campaign[]
+  contracts      Contract[]
+  classSessions  ClassSession[]
+}
+
+model Plan {
+  id             String      @id // keep stable ids from seed (sem-2x, etc.)
+  studioId       String
+  name           String
+  period         PlanPeriod
+  frequency      Int
+  frequencyLabel String
+  price          Decimal     @db.Decimal(10, 2)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  studio   Studio    @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  students Student[]
+  contracts Contract[]
+
+  @@index([studioId])
+}
+
+model Professional {
+  id           String   @id @default(cuid())
+  studioId     String
+  name         String
+  role         String
+  registration String
+  email        String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@index([studioId])
+}
+
+model StudioHour {
+  id       String  @id @default(cuid())
+  studioId String
+  weekday  Weekday
+  open     String  @db.VarChar(5)
+  close    String  @db.VarChar(5)
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@unique([studioId, weekday])
+  @@index([studioId])
+}
+
+model TimeSlot {
+  id       String     @id @default(cuid())
+  studioId String
+  period   TimePeriod
+  time     String     @db.VarChar(5)
+  capacity Int        @default(4)
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@unique([studioId, time])
+  @@index([studioId])
+}
+
+model Student {
+  id               String        @id @default(cuid())
+  studioId         String
+  name             String
+  birthDate        DateTime      @db.Date
+  sex              Sex
+  cpf              String        @default("")
+  phone            String        @default("")
+  email            String        @default("")
+  address          String        @db.Text
+  emergencyContact String        @db.Text
+  active           Boolean       @default(true)
+  since            DateTime      @db.Date
+  objective        String        @db.Text
+  pathologies      String        @db.Text
+  injuries         String        @db.Text
+  surgeries        String        @db.Text
+  restrictions     String        @db.Text
+  medications      String        @db.Text
+  notes            String        @db.Text
+  planId           String
+  monthlyValue     Decimal       @db.Decimal(10, 2)
+  discountPercent  Int           @default(0)
+  dueDay           Int           @default(10)
+  paymentMethod    PaymentMethod @default(PIX)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  studio      Studio               @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  plan        Plan                 @relation(fields: [planId], references: [id])
+  schedule    ScheduleSlot[]
+  payments    Payment[]
+  assessments PhysicalAssessment[]
+  evolutions  Evolution[]
+  photos      EvolutionPhoto[]
+  contracts   Contract[]
+  sessions    ClassSession[]
+
+  @@index([studioId])
+  @@index([planId])
+  @@index([active])
+  @@index([name])
+}
+
+model ScheduleSlot {
+  id        String  @id @default(cuid())
+  studentId String
+  weekday   Weekday
+  time      String  @db.VarChar(5)
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, weekday, time])
+  @@index([studentId])
+}
+
+model Payment {
+  id        String         @id @default(cuid())
+  studentId String
+  reference String
+  dueDate   DateTime       @db.Date
+  amount    Decimal        @db.Decimal(10, 2)
+  status    PaymentStatus  @default(pendente)
+  method    PaymentMethod?
+  paidAt    DateTime?      @db.Date
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([status])
+}
+
+model PhysicalAssessment {
+  id          String   @id @default(cuid())
+  studentId   String
+  date        DateTime @db.Date
+  weight      Float
+  height      Float
+  bodyFat     Float?
+  muscleMass  Float?
+  armRight    Float
+  armLeft     Float
+  chest       Float
+  waist       Float
+  abdomen     Float
+  hip         Float
+  thighRight  Float
+  thighLeft   Float
+  calfRight   Float
+  calfLeft    Float
+  createdAt   DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+}
+
+model Evolution {
+  id           String   @id @default(cuid())
+  studentId    String
+  date         DateTime @db.Date
+  professional String
+  clinical     String   @db.Text
+  complaints   String   @db.Text
+  improvements String   @db.Text
+  exercises    String   @db.Text
+  conduct      String   @db.Text
+  createdAt    DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+}
+
+model EvolutionPhoto {
+  id        String   @id @default(cuid())
+  studentId String
+  date      DateTime @db.Date
+  label     String
+  url       String
+  createdAt DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+}
+
+model Contract {
+  id                    String         @id @default(cuid())
+  studioId              String
+  studentId             String
+  number                String
+  planId                String
+  planLabel             String
+  startDate             DateTime       @db.Date
+  endDate               DateTime       @db.Date
+  status                ContractStatus @default(rascunho)
+  monthlyValue          Decimal        @db.Decimal(10, 2)
+  discountPercent       Int            @default(0)
+  discountNote          String?
+  dueDay                Int
+  paymentMethod         PaymentMethod
+  financialResponsible  String
+  lateFeePercent        Float          @default(2)
+  interestPercent       Float          @default(1)
+  clauses               Json
+  signedAt              DateTime?      @db.Date
+  signatureName         String?
+  version               Int            @default(1)
+  previousVersions      Json
+  history               Json
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  studio  Studio  @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  plan    Plan    @relation(fields: [planId], references: [id])
+
+  @@unique([studioId, number])
+  @@index([studentId])
+  @@index([studioId])
+}
+
+model Expense {
+  id        String          @id @default(cuid())
+  studioId  String
+  name      String
+  category  ExpenseCategory
+  amount    Decimal         @db.Decimal(10, 2)
+  dueDay    Int
+  status    ExpenseStatus   @default(pendente)
+  paidAt    DateTime?       @db.Date
+  recurring Boolean         @default(true)
+  notes     String?         @db.Text
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@index([studioId])
+}
+
+model Campaign {
+  id              String              @id @default(cuid())
+  studioId        String
+  name            String
+  type            CampaignType
+  channel         CampaignChannel
+  audience        CampaignAudience
+  audienceLabel   String
+  startDate       DateTime            @db.Date
+  endDate         DateTime?           @db.Date
+  scheduledAt     DateTime?
+  status          CampaignStatus      @default(rascunho)
+  messageTemplate String              @db.Text
+  variables       Json
+  attachments     Json
+  automation      CampaignAutomation?
+  statsSent       Int                 @default(0)
+  statsOpened     Int                 @default(0)
+  statsClicked    Int                 @default(0)
+  statsConverted  Int                 @default(0)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@index([studioId])
+  @@index([status])
+}
+
+model ClassSession {
+  id             String           @id @default(cuid())
+  studioId       String
+  studentId      String?
+  guestName      String?
+  date           DateTime         @db.Date
+  weekday        Weekday
+  time           String           @db.VarChar(5)
+  status         AttendanceStatus @default(agendada)
+  type           ClassSessionType @default(fixa)
+  professionalId String?
+  notes          String?          @db.Text
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  studio  Studio   @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  student Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+
+  @@index([studioId, date])
+  @@index([studentId])
+}

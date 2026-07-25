@@ -112,6 +112,8 @@ import {
   weekdays,
   type PaymentStatus,
 } from '@/lib/data'
+import { updateStudent } from '@/lib/students-api'
+import type { UpdateStudentInput } from '@/lib/validations/student'
 
 const measureLabels: { key: string; label: string }[] = [
   { key: 'armRight', label: 'Braço direito' },
@@ -189,20 +191,64 @@ export function StudentProfile({ student: initial }: { student: Student }) {
     }
   }, [sortedEvolutions.length, evolutionIndex])
 
+  async function persistProfile(patch: UpdateStudentInput) {
+    try {
+      const updated = await updateStudent(student.id, patch)
+      setStudent(updated)
+      // Mantém o mock em memória sincronizado para módulos ainda não migrados
+      patchStudent(student.id, updated)
+      return updated
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível salvar as alterações',
+      )
+      return null
+    }
+  }
+
   function updateField<K extends keyof Student>(key: K, value: Student[K]) {
-    setStudent((prev) => {
-      const updated = patchStudent(prev.id, {
-        [key]: value,
-      } as Partial<Student>)
-      return updated ? { ...updated } : { ...prev, [key]: value }
-    })
+    setStudent((prev) => ({ ...prev, [key]: value }))
+    void persistProfile({ [key]: value } as UpdateStudentInput)
   }
 
   function syncStudent(patch: Partial<Student>) {
-    setStudent((prev) => {
-      const updated = patchStudent(prev.id, patch) ?? { ...prev, ...patch }
-      return { ...updated }
-    })
+    setStudent((prev) => ({ ...prev, ...patch }))
+    const apiPatch: UpdateStudentInput = {}
+    const keys: (keyof UpdateStudentInput)[] = [
+      'name',
+      'birthDate',
+      'sex',
+      'cpf',
+      'phone',
+      'email',
+      'address',
+      'emergencyContact',
+      'active',
+      'since',
+      'objective',
+      'pathologies',
+      'injuries',
+      'surgeries',
+      'restrictions',
+      'medications',
+      'notes',
+      'planId',
+      'monthlyValue',
+      'discountPercent',
+      'dueDay',
+      'paymentMethod',
+      'schedule',
+    ]
+    for (const key of keys) {
+      if (key in patch) {
+        ;(apiPatch as Record<string, unknown>)[key] = patch[key as keyof Student]
+      }
+    }
+    if (Object.keys(apiPatch).length > 0) {
+      void persistProfile(apiPatch)
+    }
   }
 
   function updateEvolution(

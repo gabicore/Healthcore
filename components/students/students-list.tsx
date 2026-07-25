@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ArrowDown,
@@ -38,7 +38,6 @@ import {
 } from '@/components/ui/empty'
 import { ActiveBadge, PaymentBadge } from '@/components/status-badges'
 import {
-  students,
   planName,
   initials,
   age,
@@ -47,6 +46,7 @@ import {
   type PaymentStatus,
   type Student,
 } from '@/lib/data'
+import { fetchStudents } from '@/lib/students-api'
 import { cn } from '@/lib/utils'
 
 type Filter = 'todos' | 'ativos' | 'inativos'
@@ -139,10 +139,38 @@ function SortableHead({
 
 export function StudentsList() {
   const router = useRouter()
+  const [students, setStudents] = useState<Student[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('todos')
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    fetchStudents()
+      .then((data) => {
+        if (!cancelled) setStudents(data)
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Não foi possível carregar os alunos',
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const filtered = useMemo(() => {
     const list = students.filter((s) => {
@@ -161,7 +189,7 @@ export function StudentsList() {
       if (result !== 0) return sortDir === 'asc' ? result : -result
       return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
     })
-  }, [query, filter, sortKey, sortDir])
+  }, [students, query, filter, sortKey, sortDir])
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -201,102 +229,119 @@ export function StudentsList() {
       </div>
 
       <Card className="overflow-hidden py-0">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <SortableHead
-                label="Aluno"
-                sortKey="name"
-                activeKey={sortKey}
-                direction={sortDir}
-                onSort={handleSort}
-                alpha
-              />
-              <SortableHead
-                label="Plano"
-                sortKey="plan"
-                activeKey={sortKey}
-                direction={sortDir}
-                onSort={handleSort}
-                className="hidden md:table-cell"
-                alpha
-              />
-              <SortableHead
-                label="Próxima aula"
-                sortKey="nextClass"
-                activeKey={sortKey}
-                direction={sortDir}
-                onSort={handleSort}
-                className="hidden lg:table-cell"
-              />
-              <SortableHead
-                label="Situação"
-                sortKey="active"
-                activeKey={sortKey}
-                direction={sortDir}
-                onSort={handleSort}
-              />
-              <SortableHead
-                label="Financeiro"
-                sortKey="payment"
-                activeKey={sortKey}
-                direction={sortDir}
-                onSort={handleSort}
-              />
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((s) => (
-              <TableRow
-                key={s.id}
-                onClick={() => router.push(`/alunos/${s.id}`)}
-                className="cursor-pointer"
-              >
-                <TableCell>
-                  <div className="flex items-center gap-3">
-                    <Avatar className="size-9">
-                      <AvatarFallback className="text-xs">
-                        {initials(s.name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex flex-col">
-                      <span className="font-medium">{s.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {age(s.birthDate)} anos · {s.email}
-                      </span>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="hidden md:table-cell text-muted-foreground">
-                  {planName(s.planId)}
-                </TableCell>
-                <TableCell className="hidden lg:table-cell text-muted-foreground">
-                  {nextClass(s)}
-                </TableCell>
-                <TableCell>
-                  <ActiveBadge active={s.active} />
-                </TableCell>
-                <TableCell>
-                  <PaymentBadge status={studentPaymentStatus(s)} />
-                </TableCell>
-                <TableCell>
-                  <ChevronRight className="size-4 text-muted-foreground" />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {filtered.length === 0 ? (
+        {loading ? (
           <Empty className="py-12">
             <EmptyHeader>
-              <EmptyTitle>Nenhum aluno encontrado</EmptyTitle>
-              <EmptyDescription>
-                Ajuste a busca ou os filtros para ver resultados.
-              </EmptyDescription>
+              <EmptyTitle>Carregando alunos…</EmptyTitle>
             </EmptyHeader>
           </Empty>
-        ) : null}
+        ) : error ? (
+          <Empty className="py-12">
+            <EmptyHeader>
+              <EmptyTitle>Erro ao carregar</EmptyTitle>
+              <EmptyDescription>{error}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <SortableHead
+                    label="Aluno"
+                    sortKey="name"
+                    activeKey={sortKey}
+                    direction={sortDir}
+                    onSort={handleSort}
+                    alpha
+                  />
+                  <SortableHead
+                    label="Plano"
+                    sortKey="plan"
+                    activeKey={sortKey}
+                    direction={sortDir}
+                    onSort={handleSort}
+                    className="hidden md:table-cell"
+                    alpha
+                  />
+                  <SortableHead
+                    label="Próxima aula"
+                    sortKey="nextClass"
+                    activeKey={sortKey}
+                    direction={sortDir}
+                    onSort={handleSort}
+                    className="hidden lg:table-cell"
+                  />
+                  <SortableHead
+                    label="Situação"
+                    sortKey="active"
+                    activeKey={sortKey}
+                    direction={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortableHead
+                    label="Financeiro"
+                    sortKey="payment"
+                    activeKey={sortKey}
+                    direction={sortDir}
+                    onSort={handleSort}
+                  />
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((s) => (
+                  <TableRow
+                    key={s.id}
+                    onClick={() => router.push(`/alunos/${s.id}`)}
+                    className="cursor-pointer"
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <Avatar className="size-9">
+                          <AvatarFallback className="text-xs">
+                            {initials(s.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{s.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {age(s.birthDate)} anos · {s.email}
+                          </span>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-muted-foreground">
+                      {planName(s.planId)}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-muted-foreground">
+                      {nextClass(s)}
+                    </TableCell>
+                    <TableCell>
+                      <ActiveBadge active={s.active} />
+                    </TableCell>
+                    <TableCell>
+                      <PaymentBadge status={studentPaymentStatus(s)} />
+                    </TableCell>
+                    <TableCell>
+                      <ChevronRight className="size-4 text-muted-foreground" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {filtered.length === 0 ? (
+              <Empty className="py-12">
+                <EmptyHeader>
+                  <EmptyTitle>Nenhum aluno encontrado</EmptyTitle>
+                  <EmptyDescription>
+                    Ajuste a busca ou os filtros para ver resultados.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : null}
+          </>
+        )}
       </Card>
     </div>
   )

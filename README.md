@@ -70,7 +70,17 @@ API de alunos: `GET/POST /api/alunos`, `GET/PATCH/DELETE /api/alunos/[id]`.
 DATABASE_URL="mysql://USUARIO:SENHA@HOST:3306/NOME_DO_BANCO"
 ```
 
-Na Hostinger, o host costuma ser `localhost` quando o app Node e o MySQL ficam no mesmo servidor.
+Na Hostinger, o host deve ser **`localhost`** quando o app Node e o MySQL ficam no mesmo servidor (não use `srvXXX.hstgr.io` no deploy — isso é só para conexão remota do seu Mac).
+
+```env
+# Deploy Hostinger (mesmo servidor)
+DATABASE_URL="mysql://u186419476_admin:SENHA@localhost:3306/u186419476_healthcore"
+
+# Dev local (remoto)
+# DATABASE_URL="mysql://u186419476_admin:SENHA@srv727.hstgr.io:3306/u186419476_healthcore"
+```
+
+O arquivo precisa se chamar **`.env`** (com o ponto). Um arquivo `env` sem ponto **não** é lido pelo Next/Prisma. Prefira também definir a variável no painel Node da Hostinger e fazer **Rebuild** depois.
 
 3. Build e start (Node):
 

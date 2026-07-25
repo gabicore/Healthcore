@@ -6,18 +6,6 @@ import { PrismaClient } from '@prisma/client'
 loadEnv({ path: '.env' })
 loadEnv({ path: 'env' })
 
-const dbUrl = process.env.DATABASE_URL || ''
-
-console.log('DATABASE_URL set?', Boolean(dbUrl))
-console.log('DATABASE host:', dbUrl.match(/@([^:/?]+)/)?.[1] ?? 'missing')
-console.log('DATABASE user:', dbUrl.match(/:\/\/([^:]+):/)?.[1] ?? 'missing')
-console.log(
-  'DATABASE password:',
-  dbUrl.match(/:\/\/[^:]+:([^@]+)@/)?.[1] ?? 'missing',
-)
-console.log('DATABASE name:', dbUrl.match(/\/([^/?]+)(\?|$)/)?.[1] ?? 'missing')
-console.log('DATABASE_URL full:', dbUrl)
-
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }

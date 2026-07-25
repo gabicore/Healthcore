@@ -1,0 +1,1568 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import Image from 'next/image'
+import Link from 'next/link'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import {
+  CalendarClock,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  FileText,
+  HeartPulse,
+  Images,
+  Plus,
+  Ruler,
+  Trash2,
+  User,
+  Wallet,
+} from 'lucide-react'
+import { toast } from 'sonner'
+
+import { InlineField } from '@/components/students/inline-field'
+import { StudentAttendancePanel } from '@/components/students/student-attendance'
+import { StudentContractsPanel } from '@/components/students/student-contracts'
+import { PageHeader } from '@/components/page-header'
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
+import { ActiveBadge, PaymentStatusSelect } from '@/components/status-badges'
+import {
+  type Evolution,
+  type PaymentMethod,
+  type PhysicalAssessment,
+  type ScheduleSlot,
+  type Sex,
+  type Student,
+  type Weekday,
+  age,
+  bmi,
+  bmiLabel,
+  formatCurrency,
+  formatShortDate,
+  getPlan,
+  getStudent,
+  patchStudent,
+  paymentMethods,
+  planName,
+  planPeriodLabel,
+  planWeeklyLimit,
+  plans,
+  studentChargedValue,
+  setPaymentMethod,
+  setPaymentPaidAt,
+  setPaymentStatus,
+  setStudentFinancialStatus,
+  studio,
+  studentPaymentStatus,
+  morningSlots,
+  afternoonSlots,
+  toIsoDate,
+  weekdays,
+  type PaymentStatus,
+} from '@/lib/data'
+
+const measureLabels: { key: string; label: string }[] = [
+  { key: 'armRight', label: 'Braço direito' },
+  { key: 'armLeft', label: 'Braço esquerdo' },
+  { key: 'chest', label: 'Peitoral' },
+  { key: 'waist', label: 'Cintura' },
+  { key: 'abdomen', label: 'Abdômen' },
+  { key: 'hip', label: 'Quadril' },
+  { key: 'thighRight', label: 'Coxa direita' },
+  { key: 'thighLeft', label: 'Coxa esquerda' },
+  { key: 'calfRight', label: 'Panturrilha direita' },
+  { key: 'calfLeft', label: 'Panturrilha esquerda' },
+]
+
+const chartConfig = {
+  peso: { label: 'Peso (kg)', color: 'var(--chart-1)' },
+  imc: { label: 'IMC', color: 'var(--chart-2)' },
+} satisfies ChartConfig
+
+const sexOptions = [
+  { value: 'Feminino', label: 'Feminino' },
+  { value: 'Masculino', label: 'Masculino' },
+  { value: 'Outro', label: 'Outro' },
+]
+
+const paymentOptions = [
+  { value: 'PIX', label: 'PIX' },
+  { value: 'Cartão de crédito', label: 'Cartão de crédito' },
+  { value: 'Boleto', label: 'Boleto' },
+  { value: 'Dinheiro', label: 'Dinheiro' },
+]
+
+const activeOptions = [
+  { value: 'true', label: 'Ativo' },
+  { value: 'false', label: 'Inativo' },
+]
+
+const planOptions = plans.map((p) => ({
+  value: p.id,
+  label: `${planPeriodLabel[p.period]} · ${p.frequencyLabel} — ${formatCurrency(p.price)}`,
+}))
+
+export function StudentProfile({ student: initial }: { student: Student }) {
+  const [student, setStudent] = useState(initial)
+  const [slotWeekday, setSlotWeekday] = useState<Weekday>('Segunda')
+  const [slotTime, setSlotTime] = useState('08:00')
+  const [assessmentIndex, setAssessmentIndex] = useState(0)
+  const [evolutionIndex, setEvolutionIndex] = useState(0)
+
+  const sortedAssessments = useMemo(
+    () =>
+      student.assessments
+        .slice()
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [student.assessments],
+  )
+
+  const sortedEvolutions = useMemo(
+    () =>
+      student.evolutions
+        .slice()
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [student.evolutions],
+  )
+
+  useEffect(() => {
+    if (assessmentIndex > sortedAssessments.length - 1) {
+      setAssessmentIndex(Math.max(0, sortedAssessments.length - 1))
+    }
+  }, [sortedAssessments.length, assessmentIndex])
+
+  useEffect(() => {
+    if (evolutionIndex > sortedEvolutions.length - 1) {
+      setEvolutionIndex(Math.max(0, sortedEvolutions.length - 1))
+    }
+  }, [sortedEvolutions.length, evolutionIndex])
+
+  function updateField<K extends keyof Student>(key: K, value: Student[K]) {
+    setStudent((prev) => {
+      const updated = patchStudent(prev.id, {
+        [key]: value,
+      } as Partial<Student>)
+      return updated ? { ...updated } : { ...prev, [key]: value }
+    })
+  }
+
+  function syncStudent(patch: Partial<Student>) {
+    setStudent((prev) => {
+      const updated = patchStudent(prev.id, patch) ?? { ...prev, ...patch }
+      return { ...updated }
+    })
+  }
+
+  function updateEvolution(
+    id: string,
+    key: keyof Evolution,
+    value: string,
+  ) {
+    setStudent((prev) => {
+      const evolutions = prev.evolutions.map((e) =>
+        e.id === id ? { ...e, [key]: value } : e,
+      )
+      patchStudent(prev.id, { evolutions })
+      return { ...prev, evolutions }
+    })
+  }
+
+  function addEvolution() {
+    const blank: Evolution = {
+      id: `e-${Date.now()}`,
+      date: toIsoDate(new Date()),
+      professional: studio.owner,
+      clinical: '',
+      complaints: '',
+      improvements: '',
+      exercises: '',
+      conduct: '',
+    }
+    setStudent((prev) => {
+      const evolutions = [blank, ...prev.evolutions]
+      patchStudent(prev.id, { evolutions })
+      return { ...prev, evolutions }
+    })
+    setEvolutionIndex(0)
+    toast.success('Nova evolução adicionada', {
+      description: 'Preencha os campos do novo bloco.',
+    })
+  }
+
+  function removeEvolution(id: string) {
+    setStudent((prev) => {
+      const evolutions = prev.evolutions.filter((e) => e.id !== id)
+      patchStudent(prev.id, { evolutions })
+      return { ...prev, evolutions }
+    })
+    setEvolutionIndex(0)
+    toast.success('Evolução removida')
+  }
+
+  function updateAssessment(
+    id: string,
+    patch: Partial<Omit<PhysicalAssessment, 'measures'>> & {
+      measures?: Partial<PhysicalAssessment['measures']>
+    },
+  ) {
+    setStudent((prev) => {
+      const assessments = prev.assessments
+        .map((a) =>
+          a.id === id
+            ? {
+                ...a,
+                ...patch,
+                measures: patch.measures
+                  ? { ...a.measures, ...patch.measures }
+                  : a.measures,
+              }
+            : a,
+        )
+        .sort((a, b) => a.date.localeCompare(b.date))
+      patchStudent(prev.id, { assessments })
+      return { ...prev, assessments }
+    })
+  }
+
+  function addAssessment() {
+    const latestAssessment =
+      student.assessments[student.assessments.length - 1]
+    const blank: PhysicalAssessment = {
+      id: `a-${Date.now()}`,
+      date: toIsoDate(new Date()),
+      weight: latestAssessment?.weight ?? 0,
+      height: latestAssessment?.height ?? 1.65,
+      bodyFat: latestAssessment?.bodyFat,
+      muscleMass: latestAssessment?.muscleMass,
+      measures: latestAssessment
+        ? { ...latestAssessment.measures }
+        : {
+            armRight: 0,
+            armLeft: 0,
+            chest: 0,
+            waist: 0,
+            abdomen: 0,
+            hip: 0,
+            thighRight: 0,
+            thighLeft: 0,
+            calfRight: 0,
+            calfLeft: 0,
+          },
+    }
+    setStudent((prev) => {
+      const assessments = [...prev.assessments, blank].sort((a, b) =>
+        a.date.localeCompare(b.date),
+      )
+      patchStudent(prev.id, { assessments })
+      return { ...prev, assessments }
+    })
+    setAssessmentIndex(0)
+    toast.success('Nova avaliação adicionada', {
+      description: 'Ajuste data, peso, altura e medidas.',
+    })
+  }
+
+  function removeAssessment(id: string) {
+    setStudent((prev) => {
+      const assessments = prev.assessments.filter((a) => a.id !== id)
+      patchStudent(prev.id, { assessments })
+      return { ...prev, assessments }
+    })
+    setAssessmentIndex(0)
+    toast.success('Avaliação removida')
+  }
+
+  function addScheduleSlot() {
+    const limit = planWeeklyLimit(student.planId)
+    if (student.schedule.length >= limit) {
+      toast.error('Limite do plano atingido', {
+        description: `O plano permite no máximo ${limit} aula(s) fixa(s) por semana. Use a seção de frequência abaixo para marcar reposição.`,
+      })
+      return
+    }
+    const exists = student.schedule.some(
+      (s) => s.weekday === slotWeekday && s.time === slotTime,
+    )
+    if (exists) {
+      toast.error('Este horário já está na agenda do aluno')
+      return
+    }
+    const next: ScheduleSlot = { weekday: slotWeekday, time: slotTime }
+    syncStudent({
+      schedule: [...student.schedule, next].sort((a, b) =>
+        `${a.weekday}${a.time}`.localeCompare(`${b.weekday}${b.time}`),
+      ),
+    })
+    toast.success('Horário fixo adicionado')
+  }
+
+  function removeScheduleSlot(slot: ScheduleSlot) {
+    syncStudent({
+      schedule: student.schedule.filter(
+        (s) => !(s.weekday === slot.weekday && s.time === slot.time),
+      ),
+    })
+    toast.success('Horário removido')
+  }
+
+  const assessmentSeries = [...student.assessments]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((a) => ({
+      date: formatShortDate(a.date).slice(0, 5),
+      peso: a.weight,
+      imc: bmi(a.weight, a.height),
+    }))
+  const latest = sortedAssessments[0]
+  const currentAssessment = sortedAssessments[assessmentIndex]
+  const currentEvolution = sortedEvolutions[evolutionIndex]
+
+  return (
+    <>
+      <PageHeader
+        title={student.name}
+        description={`${age(student.birthDate)} anos · ${planName(student.planId)}`}
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          nativeButton={false}
+          render={<Link href="/alunos" />}
+        >
+          Voltar
+        </Button>
+      </PageHeader>
+
+      <div className="flex flex-col gap-4 p-4 md:p-6">
+        <p className="text-xs text-muted-foreground">
+          Clique em qualquer informação para editar diretamente na tela.
+        </p>
+
+        <Tabs defaultValue="dados" className="gap-4">
+          <div className="overflow-x-auto">
+            <TabsList variant="line" className="w-max">
+              <TabsTrigger value="dados">
+                <User data-icon="inline-start" />
+                Dados pessoais
+              </TabsTrigger>
+              <TabsTrigger value="clinico">
+                <HeartPulse data-icon="inline-start" />
+                Histórico clínico
+              </TabsTrigger>
+              <TabsTrigger value="avaliacoes">
+                <Ruler data-icon="inline-start" />
+                Avaliações
+              </TabsTrigger>
+              <TabsTrigger value="evolucao">
+                <ClipboardList data-icon="inline-start" />
+                Evolução
+              </TabsTrigger>
+              <TabsTrigger value="fotos">
+                <Images data-icon="inline-start" />
+                Fotos
+              </TabsTrigger>
+              <TabsTrigger value="financeiro">
+                <Wallet data-icon="inline-start" />
+                Financeiro
+              </TabsTrigger>
+              <TabsTrigger value="contratos">
+                <FileText data-icon="inline-start" />
+                Contratos
+              </TabsTrigger>
+              <TabsTrigger value="agenda">
+                <CalendarClock data-icon="inline-start" />
+                Agenda
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="dados">
+            <Card>
+              <CardHeader>
+                <CardTitle>Dados pessoais</CardTitle>
+                <CardDescription>
+                  Clique no valor para editar
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
+                  <InlineField
+                    label="Nome completo"
+                    value={student.name}
+                    onSave={(v) => updateField('name', v)}
+                  />
+                  <InlineField
+                    label="Data de nascimento"
+                    value={student.birthDate}
+                    displayValue={formatShortDate(student.birthDate)}
+                    type="date"
+                    onSave={(v) => updateField('birthDate', v)}
+                  />
+                  <InlineField
+                    label="Sexo"
+                    value={student.sex}
+                    type="select"
+                    options={sexOptions}
+                    onSave={(v) => updateField('sex', v as Sex)}
+                  />
+                  <InlineField
+                    label="CPF"
+                    value={student.cpf}
+                    placeholder="000.000.000-00"
+                    onSave={(v) => updateField('cpf', v)}
+                  />
+                  <InlineField
+                    label="Telefone"
+                    value={student.phone}
+                    type="tel"
+                    onSave={(v) => updateField('phone', v)}
+                  />
+                  <InlineField
+                    label="E-mail"
+                    value={student.email}
+                    type="email"
+                    onSave={(v) => updateField('email', v)}
+                  />
+                  <InlineField
+                    label="Situação"
+                    value={String(student.active)}
+                    displayValue={student.active ? 'Ativo' : 'Inativo'}
+                    type="select"
+                    options={activeOptions}
+                    onSave={(v) => updateField('active', v === 'true')}
+                  />
+                  <InlineField
+                    label="Aluno desde"
+                    value={student.since}
+                    displayValue={formatShortDate(student.since)}
+                    type="date"
+                    onSave={(v) => updateField('since', v)}
+                  />
+                  <InlineField
+                    label="Endereço"
+                    value={student.address}
+                    className="sm:col-span-2"
+                    onSave={(v) => updateField('address', v)}
+                  />
+                  <InlineField
+                    label="Contato de emergência"
+                    value={student.emergencyContact}
+                    className="sm:col-span-2 lg:col-span-3"
+                    onSave={(v) => updateField('emergencyContact', v)}
+                  />
+                </dl>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="clinico">
+            <Card>
+              <CardHeader>
+                <CardTitle>Histórico clínico</CardTitle>
+                <CardDescription>
+                  Clique no valor para editar
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
+                  <InlineField
+                    label="Objetivo"
+                    value={student.objective}
+                    type="textarea"
+                    onSave={(v) => updateField('objective', v)}
+                  />
+                  <InlineField
+                    label="Patologias"
+                    value={student.pathologies}
+                    type="textarea"
+                    onSave={(v) => updateField('pathologies', v)}
+                  />
+                  <InlineField
+                    label="Lesões"
+                    value={student.injuries}
+                    type="textarea"
+                    onSave={(v) => updateField('injuries', v)}
+                  />
+                  <InlineField
+                    label="Cirurgias"
+                    value={student.surgeries}
+                    type="textarea"
+                    onSave={(v) => updateField('surgeries', v)}
+                  />
+                  <InlineField
+                    label="Restrições"
+                    value={student.restrictions}
+                    type="textarea"
+                    onSave={(v) => updateField('restrictions', v)}
+                  />
+                  <InlineField
+                    label="Medicamentos"
+                    value={student.medications}
+                    type="textarea"
+                    onSave={(v) => updateField('medications', v)}
+                  />
+                </dl>
+                <Separator className="my-4" />
+                <InlineField
+                  label="Observações"
+                  value={student.notes}
+                  type="textarea"
+                  onSave={(v) => updateField('notes', v)}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="avaliacoes" className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Clique nos valores para editar · IMC calculado automaticamente
+              </p>
+              <Button size="sm" onClick={addAssessment}>
+                <Plus data-icon="inline-start" />
+                Nova avaliação
+              </Button>
+            </div>
+
+            {student.assessments.length === 0 ? (
+              <EmptyState
+                icon={<Ruler className="size-6" />}
+                title="Nenhuma avaliação registrada"
+                description="Registre a primeira avaliação física para acompanhar a evolução."
+                action={
+                  <Button size="sm" onClick={addAssessment}>
+                    <Plus data-icon="inline-start" />
+                    Nova avaliação
+                  </Button>
+                }
+              />
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  <Card>
+                    <CardContent className="flex flex-col gap-1 pt-6">
+                      <span className="text-sm text-muted-foreground">
+                        Peso atual
+                      </span>
+                      <span className="text-2xl font-semibold">
+                        {latest.weight} kg
+                      </span>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="flex flex-col gap-1 pt-6">
+                      <span className="text-sm text-muted-foreground">IMC</span>
+                      <span className="text-2xl font-semibold">
+                        {bmi(latest.weight, latest.height)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {bmiLabel(bmi(latest.weight, latest.height))}
+                      </span>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="flex flex-col gap-1 pt-6">
+                      <span className="text-sm text-muted-foreground">
+                        Gordura / Massa muscular
+                      </span>
+                      <span className="text-2xl font-semibold">
+                        {latest.bodyFat ? `${latest.bodyFat}%` : '—'}
+                        {latest.muscleMass ? (
+                          <span className="text-base font-normal text-muted-foreground">
+                            {' '}
+                            · {latest.muscleMass} kg
+                          </span>
+                        ) : null}
+                      </span>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {student.assessments.length > 1 ? (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Evolução de peso e IMC</CardTitle>
+                      <CardDescription>
+                        Histórico das avaliações registradas
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <ChartContainer
+                        config={chartConfig}
+                        className="h-[240px] w-full"
+                      >
+                        <LineChart
+                          data={assessmentSeries}
+                          margin={{ left: 4, right: 8, top: 8 }}
+                        >
+                          <CartesianGrid
+                            vertical={false}
+                            strokeDasharray="3 3"
+                          />
+                          <XAxis
+                            dataKey="date"
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                          />
+                          <YAxis
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            width={32}
+                          />
+                          <ChartTooltip content={<ChartTooltipContent />} />
+                          <Line
+                            dataKey="peso"
+                            type="monotone"
+                            stroke="var(--color-peso)"
+                            strokeWidth={2}
+                            dot={{ r: 3 }}
+                          />
+                          <Line
+                            dataKey="imc"
+                            type="monotone"
+                            stroke="var(--color-imc)"
+                            strokeWidth={2}
+                            dot={{ r: 3 }}
+                          />
+                        </LineChart>
+                      </ChartContainer>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
+                <Card>
+                  <CardHeader className="gap-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex flex-col gap-1">
+                        <CardTitle>Histórico de avaliações</CardTitle>
+                        <CardDescription>
+                          {sortedAssessments.length} registro
+                          {sortedAssessments.length === 1 ? '' : 's'} · mais
+                          recente primeiro
+                        </CardDescription>
+                      </div>
+                      {sortedAssessments.length > 1 ? (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon-sm"
+                            disabled={assessmentIndex === 0}
+                            onClick={() =>
+                              setAssessmentIndex((i) => Math.max(0, i - 1))
+                            }
+                            aria-label="Avaliação mais recente"
+                          >
+                            <ChevronLeft />
+                          </Button>
+                          <span className="min-w-16 text-center text-sm tabular-nums text-muted-foreground">
+                            {assessmentIndex + 1} / {sortedAssessments.length}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon-sm"
+                            disabled={
+                              assessmentIndex >= sortedAssessments.length - 1
+                            }
+                            onClick={() =>
+                              setAssessmentIndex((i) =>
+                                Math.min(sortedAssessments.length - 1, i + 1),
+                              )
+                            }
+                            aria-label="Avaliação anterior"
+                          >
+                            <ChevronRight />
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {currentAssessment ? (
+                      <AssessmentSlide
+                        assessment={currentAssessment}
+                        isLatest={assessmentIndex === 0}
+                        onUpdate={updateAssessment}
+                        onRemove={removeAssessment}
+                      />
+                    ) : null}
+
+                    {sortedAssessments.length > 1 ? (
+                      <div className="mt-5 flex items-center justify-center gap-1.5">
+                        {sortedAssessments.map((a, i) => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            onClick={() => setAssessmentIndex(i)}
+                            aria-label={`Ir para avaliação ${i + 1}`}
+                            className={`h-1.5 rounded-full transition-all ${
+                              i === assessmentIndex
+                                ? 'w-6 bg-primary'
+                                : 'w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/50'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+          </TabsContent>
+
+          <TabsContent value="evolucao" className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Clique nos campos para editar ou adicione um novo bloco
+              </p>
+              <Button size="sm" onClick={addEvolution}>
+                <Plus data-icon="inline-start" />
+                Nova evolução
+              </Button>
+            </div>
+
+            {student.evolutions.length === 0 ? (
+              <EmptyState
+                icon={<ClipboardList className="size-6" />}
+                title="Nenhuma evolução registrada"
+                description="As anotações clínicas aparecerão aqui em ordem cronológica."
+                action={
+                  <Button size="sm" onClick={addEvolution}>
+                    <Plus data-icon="inline-start" />
+                    Nova evolução
+                  </Button>
+                }
+              />
+            ) : (
+              <Card>
+                <CardHeader className="gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex flex-col gap-1">
+                      <CardTitle>Histórico de evoluções</CardTitle>
+                      <CardDescription>
+                        {sortedEvolutions.length} registro
+                        {sortedEvolutions.length === 1 ? '' : 's'} · mais
+                        recente primeiro
+                      </CardDescription>
+                    </div>
+                    {sortedEvolutions.length > 1 ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon-sm"
+                          disabled={evolutionIndex === 0}
+                          onClick={() =>
+                            setEvolutionIndex((i) => Math.max(0, i - 1))
+                          }
+                          aria-label="Evolução mais recente"
+                        >
+                          <ChevronLeft />
+                        </Button>
+                        <span className="min-w-16 text-center text-sm tabular-nums text-muted-foreground">
+                          {evolutionIndex + 1} / {sortedEvolutions.length}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon-sm"
+                          disabled={
+                            evolutionIndex >= sortedEvolutions.length - 1
+                          }
+                          onClick={() =>
+                            setEvolutionIndex((i) =>
+                              Math.min(sortedEvolutions.length - 1, i + 1),
+                            )
+                          }
+                          aria-label="Evolução anterior"
+                        >
+                          <ChevronRight />
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {currentEvolution ? (
+                    <EvolutionSlide
+                      evolution={currentEvolution}
+                      isLatest={evolutionIndex === 0}
+                      onUpdate={updateEvolution}
+                      onRemove={removeEvolution}
+                    />
+                  ) : null}
+
+                  {sortedEvolutions.length > 1 ? (
+                    <div className="mt-5 flex items-center justify-center gap-1.5">
+                      {sortedEvolutions.map((e, i) => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          onClick={() => setEvolutionIndex(i)}
+                          aria-label={`Ir para evolução ${i + 1}`}
+                          className={`h-1.5 rounded-full transition-all ${
+                            i === evolutionIndex
+                              ? 'w-6 bg-primary'
+                              : 'w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/50'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="fotos">
+            {student.photos.length === 0 ? (
+              <EmptyState
+                icon={<Images className="size-6" />}
+                title="Nenhuma foto de evolução"
+                description="Faça upload de fotos para comparar a evolução lado a lado."
+              />
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Comparativo de evolução</CardTitle>
+                  <CardDescription>
+                    Fotos organizadas por data
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                    {student.photos.map((p) => (
+                      <figure key={p.id} className="flex flex-col gap-2">
+                        <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-border bg-muted">
+                          <Image
+                            src={p.url || '/placeholder.svg'}
+                            alt={`Foto de evolução — ${p.label}`}
+                            fill
+                            className="object-cover"
+                            sizes="(max-width: 640px) 50vw, 25vw"
+                          />
+                        </div>
+                        <figcaption className="flex items-center justify-between">
+                          <span className="text-sm font-medium">{p.label}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatShortDate(p.date).slice(0, 5)}
+                          </span>
+                        </figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="financeiro" className="flex flex-col gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Plano e cobrança</CardTitle>
+                <CardDescription>
+                  Desconto individual recalcula o valor final automaticamente
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
+                  <InlineField
+                    label="Plano"
+                    value={student.planId}
+                    displayValue={planName(student.planId)}
+                    type="select"
+                    options={planOptions}
+                    onSave={(v) => {
+                      const plan = getPlan(v)
+                      const limit = plan?.frequency ?? 1
+                      const previousCount = student.schedule.length
+                      syncStudent({
+                        planId: v,
+                        monthlyValue: plan
+                          ? studentChargedValue(
+                              plan,
+                              student.discountPercent ?? 0,
+                            )
+                          : student.monthlyValue,
+                      })
+                      if (previousCount > limit) {
+                        toast.message('Agenda fixa ajustada', {
+                          description: `O novo plano permite ${limit} aula(s)/semana. Horários extras foram removidos. Reposições ficam na seção de frequência.`,
+                        })
+                      }
+                    }}
+                  />
+                  <div className="flex flex-col gap-0.5 py-2">
+                    <dt className="text-xs text-muted-foreground">
+                      Valor do plano
+                    </dt>
+                    <dd className="text-sm tabular-nums">
+                      {formatCurrency(getPlan(student.planId)?.price ?? 0)}
+                    </dd>
+                  </div>
+                  <InlineField
+                    label="Desconto (%)"
+                    value={String(student.discountPercent ?? 0)}
+                    displayValue={`${student.discountPercent ?? 0}%`}
+                    type="number"
+                    onSave={(v) => {
+                      const discountPercent = Math.min(
+                        100,
+                        Math.max(0, Number(v) || 0),
+                      )
+                      const plan = getPlan(student.planId)
+                      syncStudent({
+                        discountPercent,
+                        monthlyValue: plan
+                          ? studentChargedValue(plan, discountPercent)
+                          : student.monthlyValue,
+                      })
+                    }}
+                  />
+                  <InlineField
+                    label="Valor final"
+                    value={String(student.monthlyValue)}
+                    displayValue={formatCurrency(student.monthlyValue)}
+                    type="number"
+                    onSave={(v) =>
+                      updateField('monthlyValue', Number(v) || 0)
+                    }
+                  />
+                  <InlineField
+                    label="Dia de vencimento"
+                    value={String(student.dueDay)}
+                    displayValue={`Dia ${student.dueDay}`}
+                    type="number"
+                    onSave={(v) => {
+                      const day = Math.min(28, Math.max(1, Number(v) || 1))
+                      updateField('dueDay', day)
+                    }}
+                  />
+                  <InlineField
+                    label="Forma de pagamento"
+                    value={student.paymentMethod}
+                    type="select"
+                    options={paymentOptions}
+                    onSave={(v) =>
+                      updateField('paymentMethod', v as PaymentMethod)
+                    }
+                  />
+                  <div className="flex flex-col gap-0.5 py-2">
+                    <dt className="text-xs text-muted-foreground">
+                      Status financeiro
+                    </dt>
+                    <dd className="flex items-center gap-2 pt-1">
+                      <ActiveBadge active={student.active} />
+                      <PaymentStatusSelect
+                        value={studentPaymentStatus(student)}
+                        aria-label="Status financeiro do aluno"
+                        onChange={(status) => {
+                          const next = setStudentFinancialStatus(
+                            student.id,
+                            status,
+                          )
+                          if (!next) {
+                            toast.error('Não foi possível atualizar o status')
+                            return
+                          }
+                          setStudent({ ...next })
+                          toast.success('Status financeiro atualizado', {
+                            description:
+                              status === 'pago'
+                                ? 'Pago'
+                                : status === 'pendente'
+                                  ? 'Pendente'
+                                  : 'Atrasado',
+                          })
+                        }}
+                      />
+                    </dd>
+                  </div>
+                </dl>
+              </CardContent>
+            </Card>
+
+            <Card className="overflow-hidden py-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Referência</TableHead>
+                    <TableHead>Vencimento</TableHead>
+                    <TableHead>Valor</TableHead>
+                    <TableHead>Forma</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Pago em</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {student.payments
+                    .slice()
+                    .sort((a, b) => b.dueDate.localeCompare(a.dueDate))
+                    .map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-medium">
+                          {p.reference}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {formatShortDate(p.dueDate)}
+                        </TableCell>
+                        <TableCell>{formatCurrency(p.amount)}</TableCell>
+                        <TableCell>
+                          <Select
+                            value={
+                              p.status === 'pago'
+                                ? (p.method ?? student.paymentMethod)
+                                : null
+                            }
+                            onValueChange={(value) => {
+                              if (!value) return
+                              const updated = setPaymentMethod(
+                                student.id,
+                                p.id,
+                                value as PaymentMethod,
+                              )
+                              if (!updated) {
+                                toast.error(
+                                  'Não foi possível atualizar a forma de pagamento',
+                                )
+                                return
+                              }
+                              const next = getStudent(student.id)
+                              if (next) setStudent({ ...next })
+                              toast.success(
+                                'Forma, status e data sincronizados',
+                                {
+                                  description: `${p.reference} · ${value} · ${formatShortDate(updated.paidAt!)}`,
+                                },
+                              )
+                            }}
+                          >
+                            <SelectTrigger
+                              size="sm"
+                              aria-label={`Forma de ${p.reference}`}
+                              className="w-[160px]"
+                            >
+                              <SelectValue placeholder="Definir forma" />
+                            </SelectTrigger>
+                            <SelectContent align="start">
+                              <SelectGroup>
+                                {paymentMethods.map((method) => (
+                                  <SelectItem key={method} value={method}>
+                                    {method}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell>
+                          <PaymentStatusSelect
+                            value={p.status}
+                            aria-label={`Status de ${p.reference}`}
+                            onChange={(status: PaymentStatus) => {
+                              const updated = setPaymentStatus(
+                                student.id,
+                                p.id,
+                                status,
+                              )
+                              if (!updated) {
+                                toast.error(
+                                  'Não foi possível atualizar o status',
+                                )
+                                return
+                              }
+                              const next = getStudent(student.id)
+                              if (next) setStudent({ ...next })
+                              if (status === 'pago') {
+                                toast.success('Pagamento confirmado', {
+                                  description: `${p.reference} · ${updated.method} · ${formatShortDate(updated.paidAt!)}`,
+                                })
+                                return
+                              }
+                              toast.success('Status atualizado', {
+                                description: `${p.reference} · ${
+                                  status === 'pendente'
+                                    ? 'Pendente'
+                                    : 'Atrasado'
+                                }`,
+                              })
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="date"
+                            value={
+                              p.status === 'pago' ? (p.paidAt ?? '') : ''
+                            }
+                            onChange={(e) => {
+                              const updated = setPaymentPaidAt(
+                                student.id,
+                                p.id,
+                                e.target.value || null,
+                              )
+                              if (!updated) {
+                                toast.error(
+                                  'Não foi possível atualizar a data',
+                                )
+                                return
+                              }
+                              const next = getStudent(student.id)
+                              if (next) setStudent({ ...next })
+                              if (!e.target.value) {
+                                toast.success('Pagamento reaberto', {
+                                  description: `${p.reference} · Pendente`,
+                                })
+                                return
+                              }
+                              toast.success(
+                                'Forma, status e data sincronizados',
+                                {
+                                  description: `${p.reference} · ${updated.method} · ${formatShortDate(e.target.value)}`,
+                                },
+                              )
+                            }}
+                            className="h-7 w-[150px]"
+                            aria-label={`Data de pagamento de ${p.reference}`}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="contratos" className="flex flex-col gap-4">
+            <StudentContractsPanel student={student} />
+          </TabsContent>
+
+          <TabsContent value="agenda" className="flex flex-col gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Agenda fixa</CardTitle>
+                <CardDescription>
+                  Vinculada ao plano {planName(student.planId)} ·{' '}
+                  {student.schedule.length}/{planWeeklyLimit(student.planId)}{' '}
+                  horário(s) na semana. Reposições ficam na seção de frequência
+                  abaixo.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="grid flex-1 grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs text-muted-foreground">Dia</span>
+                      <Select
+                        value={slotWeekday}
+                        onValueChange={(v) =>
+                          setSlotWeekday((v as Weekday) ?? 'Segunda')
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {weekdays.map((d) => (
+                              <SelectItem key={d} value={d}>
+                                {d}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs text-muted-foreground">
+                        Horário
+                      </span>
+                      <Select
+                        value={slotTime}
+                        onValueChange={(v) => setSlotTime(v ?? '08:00')}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectLabel>Manhã</SelectLabel>
+                            {morningSlots.map((t) => (
+                              <SelectItem key={t} value={t}>
+                                {t}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                          <SelectGroup>
+                            <SelectLabel>Tarde</SelectLabel>
+                            {afternoonSlots.map((t) => (
+                              <SelectItem key={t} value={t}>
+                                {t}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={addScheduleSlot}
+                    disabled={
+                      student.schedule.length >=
+                      planWeeklyLimit(student.planId)
+                    }
+                  >
+                    <Plus data-icon="inline-start" />
+                    Adicionar horário
+                  </Button>
+                </div>
+
+                {student.schedule.length >= planWeeklyLimit(student.planId) ? (
+                  <p className="text-xs text-muted-foreground">
+                    Limite do plano atingido. Para reposição ou aula extra, use a
+                    seção de frequência abaixo.
+                  </p>
+                ) : null}
+
+                {student.schedule.length === 0 ? (
+                  <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                    Nenhum horário fixo. Adicione até{' '}
+                    {planWeeklyLimit(student.planId)} dia(s) conforme o plano.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {student.schedule.map((slot) => (
+                      <Badge
+                        key={slot.weekday + slot.time}
+                        variant="outline"
+                        className="gap-1.5 px-3 py-1.5 text-sm"
+                      >
+                        <CalendarClock className="size-3.5 text-muted-foreground" />
+                        {slot.weekday} · {slot.time}
+                        <button
+                          type="button"
+                          onClick={() => removeScheduleSlot(slot)}
+                          className="ml-0.5 rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          aria-label={`Remover ${slot.weekday} ${slot.time}`}
+                        >
+                          <Trash2 className="size-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <StudentAttendancePanel studentId={student.id} />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </>
+  )
+}
+
+function EvolutionSlide({
+  evolution,
+  isLatest,
+  onUpdate,
+  onRemove,
+}: {
+  evolution: Evolution
+  isLatest: boolean
+  onUpdate: (id: string, key: keyof Evolution, value: string) => void
+  onRemove: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold">Evolução</h3>
+            {isLatest ? <Badge>Mais recente</Badge> : null}
+          </div>
+          <InlineField
+            label="Data"
+            value={evolution.date}
+            displayValue={formatShortDate(evolution.date)}
+            type="date"
+            className="py-0"
+            valueClassName="text-base font-semibold"
+            onSave={(v) => onUpdate(evolution.id, 'date', v)}
+          />
+          <InlineField
+            label="Profissional"
+            value={evolution.professional}
+            className="py-0"
+            onSave={(v) => onUpdate(evolution.id, 'professional', v)}
+          />
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => onRemove(evolution.id)}
+          aria-label="Remover evolução"
+        >
+          <Trash2 className="size-4 text-muted-foreground" />
+        </Button>
+      </div>
+
+      <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
+        <InlineField
+          label="Evolução clínica"
+          value={evolution.clinical}
+          type="textarea"
+          onSave={(v) => onUpdate(evolution.id, 'clinical', v)}
+        />
+        <InlineField
+          label="Queixas"
+          value={evolution.complaints}
+          type="textarea"
+          onSave={(v) => onUpdate(evolution.id, 'complaints', v)}
+        />
+        <InlineField
+          label="Melhoras"
+          value={evolution.improvements}
+          type="textarea"
+          onSave={(v) => onUpdate(evolution.id, 'improvements', v)}
+        />
+        <InlineField
+          label="Exercícios realizados"
+          value={evolution.exercises}
+          type="textarea"
+          onSave={(v) => onUpdate(evolution.id, 'exercises', v)}
+        />
+      </dl>
+      <Separator />
+      <InlineField
+        label="Condutas"
+        value={evolution.conduct}
+        type="textarea"
+        onSave={(v) => onUpdate(evolution.id, 'conduct', v)}
+      />
+    </div>
+  )
+}
+
+function AssessmentSlide({
+  assessment,
+  isLatest,
+  onUpdate,
+  onRemove,
+}: {
+  assessment: PhysicalAssessment
+  isLatest: boolean
+  onUpdate: (
+    id: string,
+    patch: Partial<Omit<PhysicalAssessment, 'measures'>> & {
+      measures?: Partial<PhysicalAssessment['measures']>
+    },
+  ) => void
+  onRemove: (id: string) => void
+}) {
+  const imcValue = bmi(assessment.weight, assessment.height)
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold">Avaliação</h3>
+            {isLatest ? <Badge>Mais recente</Badge> : null}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            IMC {imcValue} · {bmiLabel(imcValue)}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => onRemove(assessment.id)}
+          aria-label="Remover avaliação"
+        >
+          <Trash2 className="size-4 text-muted-foreground" />
+        </Button>
+      </div>
+
+      <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
+        <InlineField
+          label="Data"
+          value={assessment.date}
+          displayValue={formatShortDate(assessment.date)}
+          type="date"
+          onSave={(v) => onUpdate(assessment.id, { date: v })}
+        />
+        <InlineField
+          label="Peso (kg)"
+          value={String(assessment.weight)}
+          displayValue={`${assessment.weight} kg`}
+          type="number"
+          onSave={(v) =>
+            onUpdate(assessment.id, { weight: Number(v) || 0 })
+          }
+        />
+        <InlineField
+          label="Altura (m)"
+          value={String(assessment.height)}
+          displayValue={`${assessment.height} m`}
+          type="number"
+          onSave={(v) =>
+            onUpdate(assessment.id, { height: Number(v) || 0 })
+          }
+        />
+        <div className="flex flex-col gap-0.5 py-2">
+          <dt className="text-xs text-muted-foreground">IMC</dt>
+          <dd className="px-1.5 py-1 text-sm font-medium">
+            {imcValue} · {bmiLabel(imcValue)}
+          </dd>
+        </div>
+        <InlineField
+          label="% Gordura (opcional)"
+          value={
+            assessment.bodyFat != null ? String(assessment.bodyFat) : ''
+          }
+          displayValue={
+            assessment.bodyFat != null
+              ? `${assessment.bodyFat}%`
+              : undefined
+          }
+          type="number"
+          emptyLabel="Clique para informar"
+          onSave={(v) =>
+            onUpdate(assessment.id, {
+              bodyFat: v ? Number(v) : undefined,
+            })
+          }
+        />
+        <InlineField
+          label="Massa muscular kg (opcional)"
+          value={
+            assessment.muscleMass != null
+              ? String(assessment.muscleMass)
+              : ''
+          }
+          displayValue={
+            assessment.muscleMass != null
+              ? `${assessment.muscleMass} kg`
+              : undefined
+          }
+          type="number"
+          emptyLabel="Clique para informar"
+          onSave={(v) =>
+            onUpdate(assessment.id, {
+              muscleMass: v ? Number(v) : undefined,
+            })
+          }
+        />
+      </dl>
+
+      <Separator />
+
+      <div>
+        <p className="mb-1 text-sm font-medium">Medidas corporais (cm)</p>
+        <dl className="grid grid-cols-2 gap-x-8 sm:grid-cols-3 lg:grid-cols-5">
+          {measureLabels.map((m) => {
+            const key = m.key as keyof PhysicalAssessment['measures']
+            const measureValue = assessment.measures[key]
+            return (
+              <InlineField
+                key={m.key}
+                label={m.label}
+                value={String(measureValue)}
+                displayValue={`${measureValue} cm`}
+                type="number"
+                onSave={(v) =>
+                  onUpdate(assessment.id, {
+                    measures: { [key]: Number(v) || 0 },
+                  })
+                }
+              />
+            )
+          })}
+        </dl>
+      </div>
+    </div>
+  )
+}
+
+function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon: React.ReactNode
+  title: string
+  description: string
+  action?: React.ReactNode
+}) {
+  return (
+    <Card>
+      <Empty className="py-12">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">{icon}</EmptyMedia>
+          <EmptyTitle>{title}</EmptyTitle>
+          <EmptyDescription>{description}</EmptyDescription>
+        </EmptyHeader>
+        {action ? <div className="mt-4">{action}</div> : null}
+      </Empty>
+    </Card>
+  )
+}

@@ -262,7 +262,7 @@ export function SettingsPage() {
                 }}
               />
               <div className="flex flex-col gap-0.5 py-2">
-                <dt className="text-xs text-muted-foreground">Plano StudioFlow</dt>
+                <dt className="text-xs text-muted-foreground">Plano HealthCore</dt>
                 <dd className="pt-1">
                   <Badge variant="outline">{studioData.plan}</Badge>
                 </dd>

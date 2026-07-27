@@ -70,6 +70,7 @@ export async function createStudentRecord(input: CreateStudentInput) {
       cpf: input.cpf ?? '',
       phone: input.phone ?? '',
       email: input.email ?? '',
+      cep: input.cep ?? '',
       address: input.address ?? '',
       emergencyContact: input.emergencyContact ?? '',
       active: input.active ?? true,
@@ -151,6 +152,7 @@ export async function updateStudentRecord(
       ...(input.cpf !== undefined ? { cpf: input.cpf } : {}),
       ...(input.phone !== undefined ? { phone: input.phone } : {}),
       ...(input.email !== undefined ? { email: input.email } : {}),
+      ...(input.cep !== undefined ? { cep: input.cep } : {}),
       ...(input.address !== undefined ? { address: input.address } : {}),
       ...(input.emergencyContact !== undefined
         ? { emergencyContact: input.emergencyContact }

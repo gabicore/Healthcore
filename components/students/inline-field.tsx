@@ -67,11 +67,7 @@ export function InlineField({
     setEditing(false)
     if (trimmed === value) return
     onSave(trimmed)
-    toast.success(`${label} atualizado`, {
-      description:
-        'A alteração será salva quando o banco de dados for conectado.',
-      duration: 1800,
-    })
+    toast.success(`${label} atualizado`, { duration: 1800 })
   }
 
   function cancel() {

@@ -84,6 +84,7 @@ export function NewStudentDialog() {
     const phone = String(formData.get('phone') ?? '').trim()
     const birthDate = String(formData.get('birth') ?? '').trim()
     const email = String(formData.get('email') ?? '').trim()
+    const cep = String(formData.get('cep') ?? '').trim()
 
     if (!name || !birthDate) {
       toast.error('Nome e data de nascimento são obrigatórios')
@@ -102,6 +103,7 @@ export function NewStudentDialog() {
         cpf,
         phone,
         email,
+        cep,
         planId,
         discountPercent,
         monthlyValue: finalValue,
@@ -190,6 +192,10 @@ export function NewStudentDialog() {
                 type="email"
                 placeholder="email@exemplo.com"
               />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="cep">CEP</FieldLabel>
+              <Input id="cep" name="cep" placeholder="00000-000" />
             </Field>
             <Field>
               <FieldLabel>Plano</FieldLabel>

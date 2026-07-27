@@ -131,6 +131,127 @@ enum CampaignAutomation {
   reativacao
 }
 
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  RECEPTIONIST
+  PROFESSIONAL
+  FINANCIAL
+  STUDENT
+  RESPONSIBLE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  LOCKED
+}
+
+enum AuthAuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  LOGOUT
+  REGISTER
+  PASSWORD_CHANGE
+  PASSWORD_RESET_REQUEST
+  PASSWORD_RESET
+  EMAIL_VERIFY
+  SESSION_REVOKE
+  ACCOUNT_LOCK
+  ACCOUNT_UNLOCK
+}
+
+model User {
+  id             String     @id @default(cuid())
+  name           String
+  email          String     @unique
+  emailVerified  Boolean    @default(false)
+  image          String?
+  role           UserRole   @default(RECEPTIONIST)
+  status         UserStatus @default(ACTIVE)
+  failedAttempts Int        @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  professionalId String?    @unique
+  studentId      String?    @unique
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  professional Professional? @relation(fields: [professionalId], references: [id], onDelete: SetNull)
+  student      Student?      @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  sessions     Session[]
+  accounts     Account[]
+  auditLogs    AuthAuditLog[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?   @db.Text
+  refreshToken          String?   @db.Text
+  idToken               String?   @db.Text
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?   @db.Text
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String   @db.Text
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model AuthAuditLog {
+  id        String          @id @default(cuid())
+  userId    String?
+  email     String?
+  action    AuthAuditAction
+  ip        String?
+  userAgent String?         @db.Text
+  metadata  Json?
+  createdAt DateTime        @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([email])
+  @@index([action])
+  @@index([createdAt])
+  @@map("auth_audit_log")
+}
+
 model Studio {
   id        String         @id @default(cuid())
   name      String
@@ -181,6 +302,7 @@ model Professional {
   updatedAt    DateTime @updatedAt
 
   studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  user   User?
 
   @@index([studioId])
 }
@@ -220,6 +342,7 @@ model Student {
   cpf              String        @default("")
   phone            String        @default("")
   email            String        @default("")
+  cep              String        @default("")
   address          String        @db.Text
   emergencyContact String        @db.Text
   active           Boolean       @default(true)
@@ -248,6 +371,7 @@ model Student {
   photos      EvolutionPhoto[]
   contracts   Contract[]
   sessions    ClassSession[]
+  user        User?
 
   @@index([studioId])
   @@index([planId])

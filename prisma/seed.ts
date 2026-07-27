@@ -22,7 +22,7 @@ import {
 const prisma = new PrismaClient()
 
 async function main() {
-  console.log('Seeding StudioFlow...')
+  console.log('Seeding HealthCore...')
 
   await prisma.classSession.deleteMany()
   await prisma.campaign.deleteMany()
@@ -33,6 +33,11 @@ async function main() {
   await prisma.physicalAssessment.deleteMany()
   await prisma.payment.deleteMany()
   await prisma.scheduleSlot.deleteMany()
+  await prisma.authAuditLog.deleteMany()
+  await prisma.session.deleteMany()
+  await prisma.account.deleteMany()
+  await prisma.verification.deleteMany()
+  await prisma.user.deleteMany()
   await prisma.student.deleteMany()
   await prisma.timeSlot.deleteMany()
   await prisma.studioHour.deleteMany()
@@ -121,6 +126,7 @@ async function main() {
         cpf: student.cpf,
         phone: student.phone,
         email: student.email,
+        cep: student.cep,
         address: student.address,
         emergencyContact: student.emergencyContact,
         active: student.active,
@@ -279,7 +285,62 @@ async function main() {
     })
   }
 
+  await seedAdminUser()
+
   console.log('Seed concluído.')
+}
+
+async function seedAdminUser() {
+  const { hashPassword } = await import('../lib/auth/password')
+  const email = 'admin@healthcore.com'
+  const passwordHash = await hashPassword('Admin@123')
+
+  const existing = await prisma.user.findUnique({ where: { email } })
+  if (existing) {
+    await prisma.account.deleteMany({
+      where: { userId: existing.id, providerId: 'credential' },
+    })
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        name: 'Administrador HealthCore',
+        role: 'SUPER_ADMIN',
+        status: 'ACTIVE',
+        emailVerified: true,
+        failedAttempts: 0,
+        lockedUntil: null,
+      },
+    })
+    await prisma.account.create({
+      data: {
+        userId: existing.id,
+        accountId: existing.id,
+        providerId: 'credential',
+        password: passwordHash,
+      },
+    })
+    console.log('Admin atualizado:', email)
+    return
+  }
+
+  const user = await prisma.user.create({
+    data: {
+      name: 'Administrador HealthCore',
+      email,
+      emailVerified: true,
+      role: 'SUPER_ADMIN',
+      status: 'ACTIVE',
+    },
+  })
+  await prisma.account.create({
+    data: {
+      userId: user.id,
+      accountId: user.id,
+      providerId: 'credential',
+      password: passwordHash,
+    },
+  })
+  console.log('Admin criado:', email, '/ senha temporária Admin@123')
 }
 
 main()

@@ -79,6 +79,7 @@ import {
 } from '@/components/ui/chart'
 import { ActiveBadge, PaymentStatusSelect } from '@/components/status-badges'
 import {
+  type Contract,
   type Evolution,
   type Payment,
   type PaymentMethod,
@@ -90,11 +91,14 @@ import {
   age,
   bmi,
   bmiLabel,
+  contractEndDateForPeriod,
   formatCurrency,
   formatShortDate,
   patchStudent,
   paymentMethods,
   planPeriodLabel,
+  planPeriodMonths,
+  planTotalClassesFromPlan,
   studentChargedValue,
   studentPaymentStatus,
   morningSlots,
@@ -115,6 +119,7 @@ import {
 } from '@/lib/evolutions-api'
 import { updatePayment } from '@/lib/payments-api'
 import { fetchPlans } from '@/lib/settings-api'
+import { fetchStudentContracts } from '@/lib/contracts-api'
 import { updateStudent } from '@/lib/students-api'
 import type { UpdateStudentInput } from '@/lib/validations/student'
 
@@ -157,6 +162,7 @@ const activeOptions = [
 export function StudentProfile({ student: initial }: { student: Student }) {
   const [student, setStudent] = useState(initial)
   const [plans, setPlans] = useState<Plan[]>([])
+  const [contracts, setContracts] = useState<Contract[]>([])
   const [slotWeekday, setSlotWeekday] = useState<Weekday>('Segunda')
   const [slotTime, setSlotTime] = useState('08:00')
   const [assessmentIndex, setAssessmentIndex] = useState(0)
@@ -170,17 +176,81 @@ export function StudentProfile({ student: initial }: { student: Student }) {
       })
   }, [])
 
+  function loadContracts() {
+    void fetchStudentContracts(student.id)
+      .then(setContracts)
+      .catch(() => {
+        /* vigência/agenda usam plano do cadastro se a API falhar */
+      })
+  }
+
+  useEffect(() => {
+    loadContracts()
+  }, [student.id])
+
   const planById = useMemo(
     () => new Map(plans.map((p) => [p.id, p])),
     [plans],
   )
   const getPlan = (id: string) => planById.get(id)
   const planName = (id: string) => getPlan(id)?.name ?? '—'
-  const planWeeklyLimit = (id: string) => getPlan(id)?.frequency ?? 1
   const planOptions = plans.map((p) => ({
     value: p.id,
     label: `${planPeriodLabel[p.period]} · ${p.frequencyLabel} — ${formatCurrency(p.price)}`,
   }))
+
+  const currentContract = useMemo(() => {
+    const priority: Record<string, number> = {
+      ativo: 0,
+      pendente_assinatura: 1,
+      rascunho: 2,
+      encerrado: 3,
+      cancelado: 4,
+    }
+    return (
+      contracts
+        .slice()
+        .sort((a, b) => {
+          const byStatus =
+            (priority[a.status] ?? 9) - (priority[b.status] ?? 9)
+          if (byStatus !== 0) return byStatus
+          return b.startDate.localeCompare(a.startDate)
+        })[0] ?? null
+    )
+  }, [contracts])
+
+  /** Plano do contrato ativo (status ativo); cai no plano do cadastro se não houver. */
+  const activeContract = useMemo(
+    () => contracts.find((c) => c.status === 'ativo') ?? null,
+    [contracts],
+  )
+  const effectivePlanId = activeContract?.planId ?? student.planId
+  const effectivePlan = getPlan(effectivePlanId)
+  const effectiveWeeklyLimit = effectivePlan?.frequency ?? 1
+
+  const planVigencia = useMemo(() => {
+    if (currentContract) {
+      return {
+        startDate: currentContract.startDate,
+        endDate: currentContract.endDate,
+      }
+    }
+    const plan = plans.find((p) => p.id === student.planId)
+    if (!plan) return null
+    return {
+      startDate: student.since,
+      endDate: contractEndDateForPeriod(student.since, plan.period),
+    }
+  }, [currentContract, plans, student.planId, student.since])
+
+  const planVigenciaHint = useMemo(() => {
+    const planId = currentContract?.planId ?? student.planId
+    const plan = plans.find((p) => p.id === planId)
+    if (!plan) return null
+    const months = planPeriodMonths(plan.period)
+    const total = planTotalClassesFromPlan(plan)
+    return `${months} ${months === 1 ? 'mês' : 'meses'} · ${total} aulas`
+  }, [currentContract, plans, student.planId])
 
   const sortedAssessments = useMemo(
     () =>
@@ -242,6 +312,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
       'cpf',
       'phone',
       'email',
+      'cep',
       'address',
       'emergencyContact',
       'active',
@@ -445,7 +516,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
   }
 
   function addScheduleSlot() {
-    const limit = planWeeklyLimit(student.planId)
+    const limit = effectiveWeeklyLimit
     if (student.schedule.length >= limit) {
       toast.error('Limite do plano atingido', {
         description: `O plano permite no máximo ${limit} aula(s) fixa(s) por semana. Use a seção de frequência abaixo para marcar reposição.`,
@@ -509,7 +580,15 @@ export function StudentProfile({ student: initial }: { student: Student }) {
           Clique em qualquer informação para editar diretamente na tela.
         </p>
 
-        <Tabs defaultValue="dados" className="gap-4">
+        <Tabs
+          defaultValue="dados"
+          className="gap-4"
+          onValueChange={(value) => {
+            if (value === 'agenda' || value === 'financeiro') {
+              loadContracts()
+            }
+          }}
+        >
           <div className="overflow-x-auto">
             <TabsList variant="line" className="w-max">
               <TabsTrigger value="dados">
@@ -595,6 +674,12 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                     onSave={(v) => updateField('email', v)}
                   />
                   <InlineField
+                    label="CEP"
+                    value={student.cep}
+                    placeholder="00000-000"
+                    onSave={(v) => updateField('cep', v)}
+                  />
+                  <InlineField
                     label="Situação"
                     value={String(student.active)}
                     displayValue={student.active ? 'Ativo' : 'Inativo'}
@@ -612,7 +697,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                   <InlineField
                     label="Endereço"
                     value={student.address}
-                    className="sm:col-span-2"
+                    className="sm:col-span-2 lg:col-span-3"
                     onSave={(v) => updateField('address', v)}
                   />
                   <InlineField
@@ -1074,6 +1159,26 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                       {formatCurrency(getPlan(student.planId)?.price ?? 0)}
                     </dd>
                   </div>
+                  <div className="flex flex-col gap-0.5 py-2">
+                    <dt className="text-xs text-muted-foreground">Vigência</dt>
+                    <dd className="text-sm">
+                      {planVigencia ? (
+                        <>
+                          <span className="tabular-nums">
+                            {formatShortDate(planVigencia.startDate)} —{' '}
+                            {formatShortDate(planVigencia.endDate)}
+                          </span>
+                          {planVigenciaHint ? (
+                            <span className="mt-0.5 block text-xs text-muted-foreground">
+                              {planVigenciaHint}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </dd>
+                  </div>
                   <InlineField
                     label="Desconto (%)"
                     value={String(student.discountPercent ?? 0)}
@@ -1337,10 +1442,10 @@ export function StudentProfile({ student: initial }: { student: Student }) {
               <CardHeader>
                 <CardTitle>Agenda fixa</CardTitle>
                 <CardDescription>
-                  Vinculada ao plano {planName(student.planId)} ·{' '}
-                  {student.schedule.length}/{planWeeklyLimit(student.planId)}{' '}
-                  horário(s) na semana. Reposições ficam na seção de frequência
-                  abaixo.
+                  Vinculada ao plano {planName(effectivePlanId)}
+                  {activeContract ? ' (contrato ativo)' : ''} ·{' '}
+                  {student.schedule.length}/{effectiveWeeklyLimit} horário(s) na
+                  semana. Reposições ficam na seção de frequência abaixo.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
@@ -1404,8 +1509,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                     type="button"
                     onClick={addScheduleSlot}
                     disabled={
-                      student.schedule.length >=
-                      planWeeklyLimit(student.planId)
+                      student.schedule.length >= effectiveWeeklyLimit
                     }
                   >
                     <Plus data-icon="inline-start" />
@@ -1413,7 +1517,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                   </Button>
                 </div>
 
-                {student.schedule.length >= planWeeklyLimit(student.planId) ? (
+                {student.schedule.length >= effectiveWeeklyLimit ? (
                   <p className="text-xs text-muted-foreground">
                     Limite do plano atingido. Para reposição ou aula extra, use a
                     seção de frequência abaixo.
@@ -1422,8 +1526,8 @@ export function StudentProfile({ student: initial }: { student: Student }) {
 
                 {student.schedule.length === 0 ? (
                   <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                    Nenhum horário fixo. Adicione até{' '}
-                    {planWeeklyLimit(student.planId)} dia(s) conforme o plano.
+                    Nenhum horário fixo. Adicione até {effectiveWeeklyLimit}{' '}
+                    dia(s) conforme o plano.
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
@@ -1450,7 +1554,11 @@ export function StudentProfile({ student: initial }: { student: Student }) {
               </CardContent>
             </Card>
 
-            <StudentAttendancePanel studentId={student.id} />
+            <StudentAttendancePanel
+              studentId={student.id}
+              fallbackPlanId={student.planId}
+              plans={plans}
+            />
           </TabsContent>
         </Tabs>
       </div>

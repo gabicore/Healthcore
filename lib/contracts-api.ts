@@ -40,14 +40,15 @@ export async function updateContract(
 
 export async function contractAction(
   id: string,
-  action: 'send' | 'rescind' | 'renew',
-): Promise<Contract> {
+  action: 'send' | 'rescind' | 'renew' | 'sign' | 'email',
+  payload?: { signatureName?: string },
+): Promise<Contract | { contract: Contract; emailedTo: string }> {
   const response = await fetch(`/api/contratos/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action }),
+    body: JSON.stringify({ action, ...payload }),
   })
-  return parseJson<Contract>(response)
+  return parseJson(response)
 }
 
 export async function deleteContract(id: string): Promise<void> {

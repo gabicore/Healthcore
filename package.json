@@ -19,8 +19,10 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@node-rs/argon2": "^2.0.2",
     "@prisma/client": "^6.19.3",
     "@vercel/analytics": "1.6.1",
+    "better-auth": "^1.6.25",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
@@ -38,7 +40,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^24",
+    "@types/node": "^24.13.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "postcss": "^8.5",

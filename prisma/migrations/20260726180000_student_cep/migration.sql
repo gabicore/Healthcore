@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Student` ADD COLUMN `cep` VARCHAR(191) NOT NULL DEFAULT '';

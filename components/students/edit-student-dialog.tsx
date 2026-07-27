@@ -60,6 +60,7 @@ type EditableStudent = Pick<
   | 'cpf'
   | 'phone'
   | 'email'
+  | 'cep'
   | 'address'
   | 'emergencyContact'
   | 'active'
@@ -91,6 +92,7 @@ function toEditable(student: Student): EditableStudent {
     cpf: student.cpf,
     phone: student.phone,
     email: student.email,
+    cep: student.cep,
     address: student.address,
     emergencyContact: student.emergencyContact,
     active: student.active,
@@ -303,14 +305,25 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                       onChange={(e) => update('email', e.target.value)}
                     />
                   </Field>
-                  <Field>
-                    <FieldLabel htmlFor="edit-address">Endereço</FieldLabel>
-                    <Input
-                      id="edit-address"
-                      value={form.address}
-                      onChange={(e) => update('address', e.target.value)}
-                    />
-                  </Field>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="edit-cep">CEP</FieldLabel>
+                      <Input
+                        id="edit-cep"
+                        value={form.cep}
+                        onChange={(e) => update('cep', e.target.value)}
+                        placeholder="00000-000"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="edit-address">Endereço</FieldLabel>
+                      <Input
+                        id="edit-address"
+                        value={form.address}
+                        onChange={(e) => update('address', e.target.value)}
+                      />
+                    </Field>
+                  </div>
                   <Field>
                     <FieldLabel htmlFor="edit-emergency">
                       Contato de emergência

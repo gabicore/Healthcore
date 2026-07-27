@@ -3,10 +3,12 @@ import { NextRequest } from 'next/server'
 import { handleRouteError, jsonError, jsonOk } from '@/lib/api'
 import {
   deleteContractRecord,
+  emailContractRecord,
   getContractById,
   renewContractRecord,
   rescindContractRecord,
   sendContractForSignatureRecord,
+  signContractRecord,
   updateContractRecord,
 } from '@/lib/contracts-service'
 import { updateContractSchema } from '@/lib/validations/contract'
@@ -37,6 +39,31 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       const updated = await sendContractForSignatureRecord(id)
       if (!updated) return jsonError('Contrato não encontrado', 404)
       return jsonOk(updated)
+    }
+    if (action === 'sign') {
+      const updated = await signContractRecord(
+        id,
+        typeof body?.signatureName === 'string'
+          ? body.signatureName
+          : undefined,
+      )
+      if (!updated) return jsonError('Contrato não encontrado', 404)
+      return jsonOk(updated)
+    }
+    if (action === 'email') {
+      try {
+        const result = await emailContractRecord(id)
+        if (!result) return jsonError('Contrato não encontrado', 404)
+        return jsonOk(result)
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === 'Aluno sem e-mail cadastrado'
+        ) {
+          return jsonError(error.message, 400)
+        }
+        throw error
+      }
     }
     if (action === 'rescind') {
       const updated = await rescindContractRecord(id)

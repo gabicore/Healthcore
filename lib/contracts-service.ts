@@ -2,8 +2,12 @@ import type {
   Contract,
   ContractHistoryEntry,
   ContractVersion,
+  PlanPeriod,
 } from '@/lib/data'
-import { defaultContractClauses } from '@/lib/data'
+import {
+  contractEndDateForPeriod,
+  defaultContractClauses,
+} from '@/lib/data'
 import { DEFAULT_STUDIO_ID } from '@/lib/constants'
 import {
   decimalToNumber,
@@ -100,6 +104,23 @@ async function historyActor() {
   return studio?.owner ?? 'Sistema'
 }
 
+async function nextContractNumber(year: number) {
+  const prefix = `#${year}-`
+  const existing = await prisma.contract.findMany({
+    where: {
+      studioId: DEFAULT_STUDIO_ID,
+      number: { startsWith: prefix },
+    },
+    select: { number: true },
+  })
+  let max = 0
+  for (const row of existing) {
+    const seq = Number(row.number.slice(prefix.length))
+    if (!Number.isNaN(seq) && seq > max) max = seq
+  }
+  return `${prefix}${String(max + 1).padStart(3, '0')}`
+}
+
 export async function listStudentContracts(studentId: string) {
   const rows = await prisma.contract.findMany({
     where: { studentId },
@@ -123,23 +144,17 @@ export async function createContractRecord(
   const plan = await prisma.plan.findUnique({ where: { id: input.planId } })
   if (!plan) throw new Error('Plano não encontrado')
 
-  const start = input.startDate
-    ? parseIsoDate(input.startDate)
-    : parseIsoDate(new Date().toISOString().slice(0, 10))
+  const startIso =
+    input.startDate ?? new Date().toISOString().slice(0, 10)
+  const start = parseIsoDate(startIso)
   const end = input.endDate
     ? parseIsoDate(input.endDate)
-    : (() => {
-        const d = new Date(start)
-        d.setUTCMonth(d.getUTCMonth() + 6)
-        return d
-      })()
+    : parseIsoDate(
+        contractEndDateForPeriod(startIso, plan.period as PlanPeriod),
+      )
 
   const year = start.getUTCFullYear()
-  const count = await prisma.contract.count({
-    where: { studioId: DEFAULT_STUDIO_ID },
-  })
-  const number =
-    input.number ?? `#${year}-${String(count + 1).padStart(3, '0')}`
+  const number = input.number ?? (await nextContractNumber(year))
   const today = new Date().toISOString().slice(0, 10)
   const by = await historyActor()
 
@@ -263,17 +278,18 @@ export async function rescindContractRecord(id: string) {
 }
 
 export async function renewContractRecord(id: string) {
-  const current = await prisma.contract.findUnique({ where: { id } })
+  const current = await prisma.contract.findUnique({
+    where: { id },
+    include: { plan: true },
+  })
   if (!current) return null
 
-  const start = parseIsoDate(new Date().toISOString().slice(0, 10))
-  const end = new Date(start)
-  end.setUTCMonth(end.getUTCMonth() + 6)
+  const startIso = new Date().toISOString().slice(0, 10)
+  const start = parseIsoDate(startIso)
+  const period = (current.plan?.period ?? 'semestral') as PlanPeriod
+  const end = parseIsoDate(contractEndDateForPeriod(startIso, period))
   const year = start.getUTCFullYear()
-  const count = await prisma.contract.count({
-    where: { studioId: DEFAULT_STUDIO_ID },
-  })
-  const number = `#${year}-${String(count + 1).padStart(3, '0')}`
+  const number = await nextContractNumber(year)
   const today = new Date().toISOString().slice(0, 10)
   const by = await historyActor()
   const serialized = serializeContract(current)
@@ -322,6 +338,90 @@ export async function renewContractRecord(id: string) {
   })
 
   return serializeContract(renewed)
+}
+
+export async function signContractRecord(
+  id: string,
+  signatureName?: string,
+) {
+  const existing = await prisma.contract.findUnique({ where: { id } })
+  if (!existing) return null
+  const name =
+    signatureName?.trim() ||
+    existing.financialResponsible ||
+    'Assinado digitalmente'
+  const today = new Date().toISOString().slice(0, 10)
+  return updateContractRecord(id, {
+    status: 'ativo',
+    signedAt: today,
+    signatureName: name,
+    historyAction: 'Assinatura registrada · contrato ativado',
+  })
+}
+
+export async function emailContractRecord(id: string) {
+  const contract = await getContractById(id)
+  if (!contract) return null
+
+  const student = await prisma.student.findUnique({
+    where: { id: contract.studentId },
+  })
+  if (!student?.email) {
+    throw new Error('Aluno sem e-mail cadastrado')
+  }
+
+  const plan = await prisma.plan.findUnique({
+    where: { id: contract.planId },
+  })
+  const planPrice = plan
+    ? Number(plan.price)
+    : contract.discountPercent > 0 && contract.discountPercent < 100
+      ? Math.round(
+          (contract.monthlyValue / (1 - contract.discountPercent / 100)) * 100,
+        ) / 100
+      : contract.monthlyValue
+
+  const { emailSender } = await import('@/lib/auth/email/console-sender')
+  const studio = await prisma.studio.findUnique({
+    where: { id: DEFAULT_STUDIO_ID },
+  })
+  const subject = `Contrato ${contract.number} — ${studio?.name ?? 'HealthCore'}`
+  const text = [
+    `Olá ${student.name},`,
+    '',
+    `Segue o resumo do contrato ${contract.number}:`,
+    `Plano: ${contract.planLabel}`,
+    `Valor do plano: R$ ${planPrice.toFixed(2)}`,
+    `Desconto: ${
+      contract.discountPercent > 0
+        ? `${contract.discountPercent}%${
+            contract.discountNote ? ` · ${contract.discountNote}` : ''
+          }`
+        : 'Sem desconto'
+    }`,
+    `Valor final: R$ ${contract.monthlyValue.toFixed(2)}`,
+    `Vigência: ${contract.startDate} a ${contract.endDate}`,
+    `Status: ${contract.status}`,
+    `Responsável financeiro: ${contract.financialResponsible}`,
+    '',
+    'Cláusulas:',
+    ...contract.clauses.map((c, i) => `${i + 1}. ${c}`),
+    '',
+    studio?.name ?? 'HealthCore',
+  ].join('\n')
+
+  await emailSender.send({
+    to: student.email,
+    subject,
+    text,
+    html: `<pre style="font-family:system-ui,sans-serif;white-space:pre-wrap">${text}</pre>`,
+  })
+
+  await updateContractRecord(id, {
+    historyAction: `Contrato enviado por e-mail para ${student.email}`,
+  })
+
+  return { contract, emailedTo: student.email }
 }
 
 export async function deleteContractRecord(id: string) {

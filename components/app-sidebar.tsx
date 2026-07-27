@@ -2,16 +2,18 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   CalendarDays,
   LayoutDashboard,
+  LogOut,
   Megaphone,
   Settings,
   Users,
   Wallet,
   Activity,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 import {
   Sidebar,
@@ -27,8 +29,10 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { studio as studioFallback } from '@/lib/data'
+import { Button } from '@/components/ui/button'
+import { initials, studio as studioFallback } from '@/lib/data'
 import { fetchStudio } from '@/lib/settings-api'
+import { authClient, useSession } from '@/lib/auth/client'
 
 const nav = [
   { title: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -41,6 +45,8 @@ const nav = [
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+  const { data: session } = useSession()
   const [studio, setStudio] = useState(studioFallback)
 
   useEffect(() => {
@@ -57,6 +63,17 @@ export function AppSidebar() {
     }
   }, [])
 
+  async function handleLogout() {
+    await authClient.signOut()
+    document.cookie = 'sf_role=; path=/; max-age=0'
+    toast.success('Sessão encerrada')
+    router.replace('/login')
+    router.refresh()
+  }
+
+  const displayName = session?.user?.name || studio.owner
+  const displayEmail = session?.user?.email || studio.email
+
   return (
     <Sidebar>
       <SidebarHeader>
@@ -65,7 +82,7 @@ export function AppSidebar() {
             <Activity className="size-5" />
           </div>
           <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold">StudioFlow</span>
+            <span className="text-sm font-semibold">HealthCore</span>
             <span className="text-xs text-muted-foreground">
               {studio.name}
             </span>
@@ -105,17 +122,24 @@ export function AppSidebar() {
         <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
           <Avatar className="size-8">
             <AvatarFallback className="bg-accent text-accent-foreground text-xs">
-              CR
+              {initials(displayName)}
             </AvatarFallback>
           </Avatar>
-          <div className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-sm font-medium">
-              {studio.owner}
-            </span>
+          <div className="flex min-w-0 flex-1 flex-col leading-tight">
+            <span className="truncate text-sm font-medium">{displayName}</span>
             <span className="truncate text-xs text-muted-foreground">
-              {studio.email}
+              {displayEmail}
             </span>
           </div>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            onClick={handleLogout}
+            title="Sair"
+          >
+            <LogOut className="size-4" />
+          </Button>
         </div>
       </SidebarFooter>
       <SidebarRail />

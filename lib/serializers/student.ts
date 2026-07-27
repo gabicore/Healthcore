@@ -108,6 +108,7 @@ export function serializeStudent(student: StudentWithRelations): Student {
     cpf: student.cpf,
     phone: student.phone,
     email: student.email,
+    cep: student.cep,
     address: student.address,
     emergencyContact: student.emergencyContact,
     active: student.active,

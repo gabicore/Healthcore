@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, RefreshCw, UserX, X, CalendarPlus } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -48,12 +48,11 @@ import {
   createMakeupSession,
   formatShortDate,
   getAttendanceStats,
-  getStudent,
   getStudentAttendanceHistory,
   getWeekdayFromDate,
   morningSlots,
   parseIsoDate,
-  planTotalClasses,
+  planTotalClassesFromPlan,
   professionals,
   setAttendanceStatus,
   getTimeSlots,
@@ -61,7 +60,9 @@ import {
   type AttendanceStatus,
   type ClassSession,
   type ClassSessionType,
+  type Plan,
 } from '@/lib/data'
+import { fetchStudentContracts } from '@/lib/contracts-api'
 
 const statusActions: {
   status: AttendanceStatus
@@ -84,12 +85,38 @@ const typeLabel: Record<ClassSessionType, string> = {
 
 type StudentAttendancePanelProps = {
   studentId: string
+  /** Plano do aluno no cadastro — usado se não houver contrato ativo. */
+  fallbackPlanId: string
+  plans: Plan[]
 }
 
 export function StudentAttendancePanel({
   studentId,
+  fallbackPlanId,
+  plans,
 }: StudentAttendancePanelProps) {
   const [version, setVersion] = useState(0)
+  const [activePlanId, setActivePlanId] = useState(fallbackPlanId)
+
+  useEffect(() => {
+    setActivePlanId(fallbackPlanId)
+  }, [fallbackPlanId])
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchStudentContracts(studentId)
+      .then((list) => {
+        if (cancelled) return
+        const active = list.find((c) => c.status === 'ativo')
+        setActivePlanId(active?.planId ?? fallbackPlanId)
+      })
+      .catch(() => {
+        if (!cancelled) setActivePlanId(fallbackPlanId)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [studentId, fallbackPlanId, version])
 
   const sessions = useMemo(() => {
     void version
@@ -98,10 +125,15 @@ export function StudentAttendancePanel({
 
   const stats = useMemo(() => getAttendanceStats(sessions), [sessions])
 
-  const totalPlanClasses = useMemo(() => {
-    const student = getStudent(studentId)
-    return student ? planTotalClasses(student.planId) : 0
-  }, [studentId])
+  const activePlan = useMemo(
+    () => plans.find((p) => p.id === activePlanId),
+    [plans, activePlanId],
+  )
+
+  const totalPlanClasses = useMemo(
+    () => (activePlan ? planTotalClassesFromPlan(activePlan) : 0),
+    [activePlan],
+  )
 
   function refresh() {
     setVersion((v) => v + 1)
@@ -122,6 +154,9 @@ export function StudentAttendancePanel({
           <h3 className="text-base font-semibold">Frequência e presença</h3>
           <p className="text-sm text-muted-foreground">
             Últimas 8 semanas · reposição não conta no limite do plano
+            {activePlan
+              ? ` · ${activePlan.frequencyLabel} · ${totalPlanClasses} aulas no contrato`
+              : null}
           </p>
         </div>
         <MakeupDialog studentId={studentId} onCreated={refresh} />

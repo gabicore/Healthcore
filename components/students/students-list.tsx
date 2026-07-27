@@ -9,10 +9,12 @@ import {
   ArrowUpAZ,
   ChevronRight,
   Search,
+  UserCheck,
+  Users,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Card } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   InputGroup,
   InputGroupAddon,
@@ -215,8 +217,52 @@ export function StudentsList() {
     setSortDir('asc')
   }
 
+  const totalStudents = students.length
+  const activeStudents = students.filter((s) => s.active).length
+
   return (
     <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Card>
+          <CardContent className="flex items-start justify-between gap-3 pt-6">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm text-muted-foreground">
+                Total de alunos
+              </span>
+              <span className="text-2xl font-semibold tracking-tight">
+                {loading ? '—' : totalStudents}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Cadastrados na plataforma
+              </span>
+            </div>
+            <div className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+              <Users className="size-5" />
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-start justify-between gap-3 pt-6">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm text-muted-foreground">
+                Alunos ativos
+              </span>
+              <span className="text-2xl font-semibold tracking-tight">
+                {loading ? '—' : activeStudents}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {loading
+                  ? '…'
+                  : `${totalStudents - activeStudents} inativo(s)`}
+              </span>
+            </div>
+            <div className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+              <UserCheck className="size-5" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <InputGroup className="sm:max-w-xs">
           <InputGroupAddon>

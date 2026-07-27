@@ -1,4 +1,4 @@
-// Camada de dados de exemplo do StudioFlow.
+// Camada de dados de exemplo do HealthCore.
 // Estruturada como um SaaS multiempresa: cada estúdio (tenant) acessa apenas seus próprios dados.
 // Nesta primeira versão navegável os dados são estáticos; a persistência real será conectada depois.
 
@@ -161,11 +161,33 @@ export const contractStatusLabel: Record<ContractStatus, string> = {
 }
 
 export const defaultContractClauses = [
-  'O aluno compromete-se a frequentar as aulas conforme a frequência contratada no plano.',
-  'O valor da mensalidade vence no dia indicado, podendo ser cobrada multa e juros em caso de atraso.',
-  'Reposições devem ser agendadas conforme a política do estúdio e disponibilidade de horário.',
-  'O cancelamento antecipado deve ser solicitado por escrito, com aviso mínimo de 30 dias.',
-  'O estúdio poderá ajustar valores mediante comunicação prévia de 30 dias.',
+  `O presente contrato tem como objeto a prestação de serviços de treinamento em grupo oferecidos pelo CONTRATADO ao ALUNO, conforme o plano e as condições estabelecidas neste documento, com foco em emagrecimento, alongamento, condicionamento físico e qualidade de vida.`,
+  `O CONTRATADO compromete-se a:
+
+• Desenvolver e supervisionar os treinamentos de acordo com os objetivos do ALUNO;
+• Respeitar as normas de segurança e saúde durante a execução dos treinos;
+• Comparecer pontualmente às sessões de treinamento, salvo casos de força maior ou imprevistos, comunicando previamente o ALUNO sempre que possível.`,
+  `O ALUNO compromete-se a:
+
+• Comparecer às aulas nos dias e horários previamente agendados;
+• Informar ao CONTRATADO qualquer problema de saúde, lesão ou limitação física que possa comprometer a execução dos exercícios;
+• Seguir as orientações fornecidas pelo CONTRATADO durante a realização dos treinos.`,
+  `Em caso de necessidade de cancelamento ou reagendamento de uma sessão, o ALUNO deverá comunicar o CONTRATADO com antecedência mínima de 4 (quatro) horas.
+
+Cancelamentos realizados fora desse prazo ou sem aviso prévio poderão implicar na cobrança integral da sessão.
+
+A reposição deverá ocorrer em até 30 (trinta) dias, contados da data da aula cancelada, conforme disponibilidade de agenda do CONTRATADO.`,
+  `O pagamento do valor final da mensalidade deverá ser realizado na data de vencimento constante nas Condições deste contrato.
+
+O atraso no pagamento poderá acarretar a suspensão das aulas até a regularização dos valores pendentes.`,
+  `O presente contrato poderá ser rescindido por qualquer das partes mediante comunicação prévia por escrito.
+
+Os valores referentes aos serviços já prestados permanecerão devidos, não havendo restituição de valores relativos às aulas efetivamente realizadas.`,
+  `O ALUNO declara estar ciente de que a prática de atividades físicas exige o fornecimento de informações verdadeiras sobre seu estado de saúde, comprometendo-se a comunicar qualquer alteração que possa interferir na realização dos exercícios.
+
+A eventual tolerância de qualquer das partes quanto ao descumprimento de quaisquer obrigações previstas neste contrato não constituirá renúncia de direito, nem alteração das condições aqui estabelecidas.
+
+Ao assinar este documento, as partes declaram que leram, compreenderam e concordam com todas as condições e cláusulas nele previstas.`,
 ]
 
 export type ExpenseCategory =
@@ -203,6 +225,7 @@ export type Student = {
   cpf: string
   phone: string
   email: string
+  cep: string
   address: string
   emergencyContact: string
   active: boolean
@@ -311,7 +334,7 @@ export const expenses: Expense[] = [
   },
   {
     id: 'exp7',
-    name: 'Assinatura StudioFlow',
+    name: 'Assinatura HealthCore',
     category: 'software',
     amount: 149,
     dueDay: 1,
@@ -608,6 +631,7 @@ export const students: Student[] = [
     cpf: '123.456.789-01',
     phone: '(11) 99123-4567',
     email: 'ana.souza@email.com',
+    cep: '05410-000',
     address: 'Rua das Acácias, 245 — Pinheiros, São Paulo/SP',
     emergencyContact: 'Marcos Souza (marido) — (11) 99888-1122',
     active: true,
@@ -730,6 +754,7 @@ export const students: Student[] = [
     cpf: '234.567.890-12',
     phone: '(11) 98456-7788',
     email: 'cadu.lima@email.com',
+    cep: '01402-000',
     address: 'Av. Rebouças, 1200 — Jardim Paulista, São Paulo/SP',
     emergencyContact: 'Fernanda Lima (esposa) — (11) 99777-3344',
     active: true,
@@ -803,6 +828,7 @@ export const students: Student[] = [
     cpf: '345.678.901-23',
     phone: '(11) 99555-2211',
     email: 'mari.oliveira@email.com',
+    cep: '05435-000',
     address: 'Rua Harmonia, 88 — Vila Madalena, São Paulo/SP',
     emergencyContact: 'Sônia Oliveira (mãe) — (11) 99666-8899',
     active: true,
@@ -860,6 +886,7 @@ export const students: Student[] = [
     cpf: '456.789.012-34',
     phone: '(11) 98123-9090',
     email: 'roberto.nunes@email.com',
+    cep: '05422-000',
     address: 'Rua dos Pinheiros, 500 — Pinheiros, São Paulo/SP',
     emergencyContact: 'Clara Nunes (filha) — (11) 99321-4455',
     active: true,
@@ -920,6 +947,7 @@ export const students: Student[] = [
     cpf: '567.890.123-45',
     phone: '(11) 99888-7766',
     email: 'fernanda.alves@email.com',
+    cep: '05408-000',
     address: 'Rua Cardeal Arcoverde, 300 — Pinheiros, São Paulo/SP',
     emergencyContact: 'Paulo Alves (irmão) — (11) 99444-2211',
     active: true,
@@ -980,6 +1008,7 @@ export const students: Student[] = [
     cpf: '678.901.234-56',
     phone: '(11) 99222-1010',
     email: 'juliana.prado@email.com',
+    cep: '05406-000',
     address: 'Rua Teodoro Sampaio, 900 — Pinheiros, São Paulo/SP',
     emergencyContact: 'Renato Prado (pai) — (11) 99123-0099',
     active: false,
@@ -1025,6 +1054,7 @@ export const students: Student[] = [
     cpf: '789.012.345-67',
     phone: '(11) 98765-4321',
     email: 'pedro.costa@email.com',
+    cep: '05416-000',
     address: 'Rua Fradique Coutinho, 150 — Vila Madalena, São Paulo/SP',
     emergencyContact: 'Luiza Costa (mãe) — (11) 99555-6677',
     active: true,
@@ -1086,6 +1116,7 @@ export const students: Student[] = [
     cpf: '890.123.456-78',
     phone: '(11) 99010-2030',
     email: 'bia.ramos@email.com',
+    cep: '05433-000',
     address: 'Rua Girassol, 42 — Vila Madalena, São Paulo/SP',
     emergencyContact: 'Diego Ramos (marido) — (11) 99080-1020',
     active: true,
@@ -1476,17 +1507,20 @@ export function sendContractForSignature(id: string) {
 export function renewContract(id: string): Contract | null {
   const current = getContract(id)
   if (!current) return null
-  const start = new Date()
-  const end = new Date(start)
-  end.setMonth(end.getMonth() + 6)
-  const year = start.getFullYear()
+  const startIso = toIsoDate(new Date())
+  const plan = getPlan(current.planId)
+  const endIso = contractEndDateForPeriod(
+    startIso,
+    plan?.period ?? 'semestral',
+  )
+  const year = new Date().getFullYear()
   const seq = String(contracts.length + 1).padStart(3, '0')
   const renewed: Contract = {
     ...current,
     id: `c-${current.studentId}-${Date.now()}`,
     number: `#${year}-${seq}`,
-    startDate: toIsoDate(start),
-    endDate: toIsoDate(end),
+    startDate: startIso,
+    endDate: endIso,
     status: 'rascunho',
     signedAt: undefined,
     signatureName: undefined,
@@ -2117,10 +2151,41 @@ export function planPeriodWeeks(period: PlanPeriod): number {
   }
 }
 
+/** Meses de vigência conforme o período do plano. */
+export function planPeriodMonths(period: PlanPeriod): number {
+  switch (period) {
+    case 'mensal':
+      return 1
+    case 'trimestral':
+      return 3
+    case 'semestral':
+      return 6
+  }
+}
+
+/**
+ * Data de término da vigência a partir do início e do período do plano
+ * (último dia do período, ex.: 01/01 + semestral → 30/06).
+ */
+export function contractEndDateForPeriod(
+  startIso: string,
+  period: PlanPeriod,
+): string {
+  const start = parseIsoDate(startIso)
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+  end.setMonth(end.getMonth() + planPeriodMonths(period))
+  end.setDate(end.getDate() - 1)
+  return toIsoDate(end)
+}
+
 /** Total de aulas do plano = semanas do período × frequência semanal. */
 export function planTotalClasses(planId: string): number {
   const plan = getPlan(planId)
   if (!plan) return 0
+  return planPeriodWeeks(plan.period) * plan.frequency
+}
+
+export function planTotalClassesFromPlan(plan: Pick<Plan, 'period' | 'frequency'>) {
   return planPeriodWeeks(plan.period) * plan.frequency
 }
 

@@ -1,4 +1,4 @@
-import { priceWithDiscount } from '@/lib/data'
+import { priceWithDiscount, slotFitsStudioHour, type Weekday } from '@/lib/data'
 import {
   decimalToNumber,
   parseIsoDate,
@@ -6,15 +6,69 @@ import {
   toDbWeekday,
 } from '@/lib/db-mappers'
 import { DEFAULT_STUDIO_ID } from '@/lib/constants'
+import {
+  findGoverningContract,
+  syncStudentFromActiveContract,
+} from '@/lib/contracts-service'
 import { prisma } from '@/lib/prisma'
 import {
   serializeStudent,
   studentDetailInclude,
 } from '@/lib/serializers/student'
+import { listStudioHours } from '@/lib/settings-service'
 import type {
   CreateStudentInput,
   UpdateStudentInput,
 } from '@/lib/validations/student'
+
+async function assertScheduleFitsStudioHours(
+  schedule: { weekday: Weekday; time: string }[],
+) {
+  if (schedule.length === 0) return
+  const hours = await listStudioHours()
+  for (const slot of schedule) {
+    const hour = hours.find((h) => h.weekday === slot.weekday)
+    if (!slotFitsStudioHour(hour, slot.time)) {
+      throw new Error(
+        `Estúdio fechado em ${slot.weekday} às ${slot.time}`,
+      )
+    }
+  }
+}
+
+/** Limite semanal da agenda fixa: plano do contrato ativo (assinado), senão o do cadastro. */
+export async function resolveStudentScheduleLimit(
+  studentId: string,
+  fallbackPlanId: string,
+) {
+  const governing = await findGoverningContract(studentId)
+  const planId = governing?.planId ?? fallbackPlanId
+  const plan = await prisma.plan.findUnique({ where: { id: planId } })
+  return {
+    planId,
+    limit: plan?.frequency ?? 1,
+    fromActiveContract: Boolean(governing),
+  }
+}
+
+async function assertScheduleFitsPlanFrequency(
+  studentId: string,
+  schedule: { weekday: Weekday; time: string }[],
+  fallbackPlanId: string,
+) {
+  if (schedule.length === 0) return
+  const { limit, fromActiveContract } = await resolveStudentScheduleLimit(
+    studentId,
+    fallbackPlanId,
+  )
+  if (schedule.length > limit) {
+    throw new Error(
+      fromActiveContract
+        ? `O plano do contrato ativo permite no máximo ${limit} aula(s) fixa(s) por semana`
+        : `O plano permite no máximo ${limit} aula(s) fixa(s) por semana`,
+    )
+  }
+}
 
 export async function listStudents(params?: {
   q?: string
@@ -46,6 +100,9 @@ export async function listStudents(params?: {
 }
 
 export async function getStudentById(id: string) {
+  // Contrato ativo é a fonte da verdade para plano, cobrança e limite de agenda.
+  await syncStudentFromActiveContract(id)
+
   const student = await prisma.student.findUnique({
     where: { id },
     include: studentDetailInclude,
@@ -56,6 +113,13 @@ export async function getStudentById(id: string) {
 export async function createStudentRecord(input: CreateStudentInput) {
   const plan = await prisma.plan.findUnique({ where: { id: input.planId } })
   if (!plan) throw new Error('Plano não encontrado')
+
+  await assertScheduleFitsStudioHours(input.schedule ?? [])
+  if ((input.schedule ?? []).length > plan.frequency) {
+    throw new Error(
+      `O plano permite no máximo ${plan.frequency} aula(s) fixa(s) por semana`,
+    )
+  }
 
   const discount = input.discountPercent ?? 0
   const monthlyValue =
@@ -109,6 +173,23 @@ export async function updateStudentRecord(
   const existing = await prisma.student.findUnique({ where: { id } })
   if (!existing) return null
 
+  const governingContract = await findGoverningContract(id)
+
+  // Com contrato ativo (assinado), plano e cobrança só mudam pelo contrato.
+  if (governingContract) {
+    const locked =
+      input.planId !== undefined ||
+      input.monthlyValue !== undefined ||
+      input.discountPercent !== undefined ||
+      input.dueDay !== undefined ||
+      input.paymentMethod !== undefined
+    if (locked) {
+      throw new Error(
+        'Com contrato ativo, altere plano e cobrança pelo contrato do aluno',
+      )
+    }
+  }
+
   let monthlyValue = decimalToNumber(existing.monthlyValue)
   let planId = existing.planId
   let discountPercent = existing.discountPercent
@@ -138,6 +219,8 @@ export async function updateStudentRecord(
   }
 
   if (input.schedule !== undefined) {
+    await assertScheduleFitsStudioHours(input.schedule)
+    await assertScheduleFitsPlanFrequency(id, input.schedule, planId)
     await prisma.scheduleSlot.deleteMany({ where: { studentId: id } })
   }
 

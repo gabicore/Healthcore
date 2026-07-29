@@ -34,7 +34,8 @@ import {
   planPeriodLabel,
   plans,
   studentChargedValue,
-  getTimeSlots,
+  availableSlotsForWeekday,
+  replaceStudioHours,
   weekdays,
   type PaymentMethod,
   type ScheduleSlot,
@@ -42,6 +43,8 @@ import {
   type Student,
   type Weekday,
 } from '@/lib/data'
+import { fetchStudentContracts } from '@/lib/contracts-api'
+import { fetchStudioHours } from '@/lib/settings-api'
 
 const periodOrder = ['semestral', 'trimestral', 'mensal'] as const
 const sexes: Sex[] = ['Feminino', 'Masculino', 'Outro']
@@ -117,10 +120,65 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
   const [form, setForm] = useState<EditableStudent>(() => toEditable(student))
   const [slotWeekday, setSlotWeekday] = useState<Weekday>('Segunda')
   const [slotTime, setSlotTime] = useState('08:00')
+  const [hoursTick, setHoursTick] = useState(0)
+  const [weeklyLimit, setWeeklyLimit] = useState(
+    () => getPlan(student.planId)?.frequency ?? 1,
+  )
+  const [hasActiveContract, setHasActiveContract] = useState(false)
+  const [activePlanLabel, setActivePlanLabel] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) setForm(toEditable(student))
   }, [open, student])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void Promise.all([
+      fetchStudioHours(),
+      fetchStudentContracts(student.id),
+    ])
+      .then(([hours, contracts]) => {
+        if (cancelled) return
+        replaceStudioHours(hours)
+        setHoursTick((t) => t + 1)
+        const active = contracts.find((c) => c.status === 'ativo')
+        setHasActiveContract(Boolean(active))
+        setActivePlanLabel(active?.planLabel ?? null)
+        const planId = active?.planId ?? student.planId
+        setWeeklyLimit(getPlan(planId)?.frequency ?? 1)
+        if (active) {
+          setForm((prev) => ({
+            ...prev,
+            planId: active.planId,
+            monthlyValue: active.monthlyValue,
+            discountPercent: active.discountPercent,
+            dueDay: active.dueDay,
+            paymentMethod: active.paymentMethod,
+          }))
+        }
+      })
+      .catch(() => {
+        /* usa horários/plano em memória */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, student.id, student.planId])
+
+  const scheduleSlotOptions = useMemo(() => {
+    void hoursTick
+    return availableSlotsForWeekday(slotWeekday)
+  }, [slotWeekday, hoursTick])
+
+  useEffect(() => {
+    if (
+      scheduleSlotOptions.length > 0 &&
+      !scheduleSlotOptions.includes(slotTime)
+    ) {
+      setSlotTime(scheduleSlotOptions[0])
+    }
+  }, [scheduleSlotOptions, slotTime])
 
   const selectedPlan = useMemo(() => getPlan(form.planId), [form.planId])
 
@@ -157,6 +215,20 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
   }
 
   function addScheduleSlot() {
+    if (form.schedule.length >= weeklyLimit) {
+      toast.error('Limite do plano atingido', {
+        description: `O contrato/plano permite no máximo ${weeklyLimit} aula(s) fixa(s) por semana.`,
+      })
+      return
+    }
+    if (scheduleSlotOptions.length === 0) {
+      toast.error('Estúdio fechado neste dia')
+      return
+    }
+    if (!scheduleSlotOptions.includes(slotTime)) {
+      toast.error('Horário fora do funcionamento do estúdio')
+      return
+    }
     const exists = form.schedule.some(
       (s) => s.weekday === slotWeekday && s.time === slotTime,
     )
@@ -188,18 +260,26 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
       toast.error('Informe o nome do aluno')
       return
     }
+    // Com contrato ativo, plano/cobrança não saem deste formulário.
+    const payload: EditableStudent = hasActiveContract
+      ? {
+          ...form,
+          planId: student.planId,
+          monthlyValue: student.monthlyValue,
+          discountPercent: student.discountPercent ?? 0,
+          dueDay: student.dueDay,
+          paymentMethod: student.paymentMethod,
+        }
+      : form
     onSave({
-      ...form,
+      ...payload,
       name: form.name.trim(),
       email: form.email.trim(),
       phone: form.phone.trim(),
       cpf: form.cpf.trim(),
     })
     setOpen(false)
-    toast.success('Aluno atualizado', {
-      description:
-        'As alterações serão persistidas quando o banco de dados for conectado.',
-    })
+    toast.success('Aluno atualizado')
   }
 
   return (
@@ -427,10 +507,18 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
 
               <TabsContent value="plano" className="mt-0">
                 <FieldGroup>
+                  {hasActiveContract ? (
+                    <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                      Plano e cobrança seguem o contrato ativo
+                      {activePlanLabel ? ` (${activePlanLabel})` : ''}. Altere
+                      pelo painel de contratos.
+                    </p>
+                  ) : null}
                   <Field>
                     <FieldLabel>Plano contratado</FieldLabel>
                     <Select
                       value={form.planId}
+                      disabled={hasActiveContract}
                       onValueChange={(v) => {
                         if (v) handlePlanChange(v)
                       }}
@@ -462,6 +550,9 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                         {form.discountPercent > 0
                           ? ` · −${form.discountPercent}% → ${formatCurrency(form.monthlyValue)}`
                           : ''}
+                        {hasActiveContract
+                          ? ` · agenda fixa até ${weeklyLimit}x/semana`
+                          : ''}
                       </p>
                     ) : null}
                   </Field>
@@ -477,6 +568,7 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                         max={100}
                         step={1}
                         value={form.discountPercent}
+                        disabled={hasActiveContract}
                         onChange={(e) =>
                           handleDiscountChange(Number(e.target.value) || 0)
                         }
@@ -502,6 +594,7 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                         min={1}
                         max={28}
                         value={form.dueDay}
+                        disabled={hasActiveContract}
                         onChange={(e) =>
                           update(
                             'dueDay',
@@ -515,6 +608,7 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                     <FieldLabel>Forma de pagamento</FieldLabel>
                     <Select
                       value={form.paymentMethod}
+                      disabled={hasActiveContract}
                       onValueChange={(v) =>
                         update(
                           'paymentMethod',
@@ -574,13 +668,21 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectGroup>
-                            {getTimeSlots().map((t) => (
-                              <SelectItem key={t} value={t}>
-                                {t}
+                          {scheduleSlotOptions.length === 0 ? (
+                            <SelectGroup>
+                              <SelectItem value={slotTime} disabled>
+                                Estúdio fechado neste dia
                               </SelectItem>
-                            ))}
-                          </SelectGroup>
+                            </SelectGroup>
+                          ) : (
+                            <SelectGroup>
+                              {scheduleSlotOptions.map((t) => (
+                                <SelectItem key={t} value={t}>
+                                  {t}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          )}
                         </SelectContent>
                       </Select>
                     </Field>
@@ -590,6 +692,10 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                         variant="outline"
                         className="w-full sm:w-auto"
                         onClick={addScheduleSlot}
+                        disabled={
+                          scheduleSlotOptions.length === 0 ||
+                          form.schedule.length >= weeklyLimit
+                        }
                       >
                         <Plus data-icon="inline-start" />
                         Adicionar
@@ -599,7 +705,8 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
 
                   {form.schedule.length === 0 ? (
                     <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-                      Nenhum horário fixo. Adicione os dias de aula do aluno.
+                      Nenhum horário fixo. Adicione até {weeklyLimit} dia(s)
+                      conforme o plano do contrato ativo.
                     </p>
                   ) : (
                     <div className="flex flex-col gap-2">

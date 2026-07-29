@@ -39,6 +39,8 @@ export const updateStudioSchema = z.object({
   owner: z.string().min(1).optional(),
   email: z.union([z.string().email(), z.literal('')]).optional(),
   phone: z.string().optional(),
+  cnpj: z.string().optional(),
+  address: z.string().optional(),
   plan: z.enum(['Essencial', 'Profissional', 'Studio']).optional(),
 })
 
@@ -46,6 +48,7 @@ export const updateStudioHourSchema = z.object({
   weekday: weekdaySchema,
   open: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   close: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  closed: z.boolean().optional(),
 })
 
 export const timePeriodSchema = z.enum(['manha', 'tarde'])

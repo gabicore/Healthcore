@@ -258,6 +258,8 @@ model Studio {
   owner     String
   email     String
   phone     String
+  cnpj      String         @default("")
+  address   String         @default("") @db.Text
   plan      StudioPlanTier @default(Profissional)
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
@@ -313,6 +315,7 @@ model StudioHour {
   weekday  Weekday
   open     String  @db.VarChar(5)
   close    String  @db.VarChar(5)
+  closed   Boolean @default(false)
 
   studio Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
 

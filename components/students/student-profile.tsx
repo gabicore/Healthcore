@@ -95,10 +95,15 @@ import {
   formatCurrency,
   formatShortDate,
   patchStudent,
+  upsertStudentInStore,
   paymentMethods,
   planPeriodLabel,
   planPeriodMonths,
-  planTotalClassesFromPlan,
+  contractTotalClasses,
+  replaceScheduleSlots,
+  replaceStudioHours,
+  availableSlotsForWeekday,
+  scheduleWithinPlanLimit,
   studentChargedValue,
   studentPaymentStatus,
   morningSlots,
@@ -118,9 +123,9 @@ import {
   updateEvolution as updateEvolutionApi,
 } from '@/lib/evolutions-api'
 import { updatePayment } from '@/lib/payments-api'
-import { fetchPlans } from '@/lib/settings-api'
+import { fetchPlans, fetchStudioHours, fetchTimeSlots } from '@/lib/settings-api'
 import { fetchStudentContracts } from '@/lib/contracts-api'
-import { updateStudent } from '@/lib/students-api'
+import { fetchStudent, updateStudent } from '@/lib/students-api'
 import type { UpdateStudentInput } from '@/lib/validations/student'
 
 const measureLabels: { key: string; label: string }[] = [
@@ -167,6 +172,29 @@ export function StudentProfile({ student: initial }: { student: Student }) {
   const [slotTime, setSlotTime] = useState('08:00')
   const [assessmentIndex, setAssessmentIndex] = useState(0)
   const [evolutionIndex, setEvolutionIndex] = useState(0)
+  const [scheduleTick, setScheduleTick] = useState(0)
+
+  useEffect(() => {
+    upsertStudentInStore(initial)
+  }, [initial])
+
+  useEffect(() => {
+    upsertStudentInStore(student)
+  }, [student])
+
+  const scheduleSlotOptions = useMemo(() => {
+    void scheduleTick
+    return availableSlotsForWeekday(slotWeekday)
+  }, [slotWeekday, scheduleTick])
+
+  const scheduleMorningOptions = useMemo(
+    () => scheduleSlotOptions.filter((t) => morningSlots.includes(t)),
+    [scheduleSlotOptions],
+  )
+  const scheduleAfternoonOptions = useMemo(
+    () => scheduleSlotOptions.filter((t) => afternoonSlots.includes(t)),
+    [scheduleSlotOptions],
+  )
 
   useEffect(() => {
     void fetchPlans()
@@ -174,11 +202,46 @@ export function StudentProfile({ student: initial }: { student: Student }) {
       .catch(() => {
         toast.error('Não foi possível carregar os planos')
       })
+    void Promise.all([fetchTimeSlots(), fetchStudioHours()])
+      .then(([slots, hours]) => {
+        replaceScheduleSlots(slots)
+        replaceStudioHours(hours)
+        setScheduleTick((t) => t + 1)
+      })
+      .catch(() => {
+        /* agenda fixa usa grade/horários padrão se a API falhar */
+      })
   }, [])
+
+  useEffect(() => {
+    if (
+      scheduleSlotOptions.length > 0 &&
+      !scheduleSlotOptions.includes(slotTime)
+    ) {
+      setSlotTime(scheduleSlotOptions[0])
+    }
+  }, [scheduleSlotOptions, slotTime])
+
+  function refreshStudentFromApi() {
+    void fetchStudent(student.id)
+      .then((updated) => {
+        setStudent(updated)
+        patchStudent(student.id, updated) || upsertStudentInStore(updated)
+      })
+      .catch(() => {
+        /* mantém estado local se a API falhar */
+      })
+  }
 
   function loadContracts() {
     void fetchStudentContracts(student.id)
-      .then(setContracts)
+      .then((list) => {
+        setContracts(list)
+        // Após listar contratos, recarrega o aluno se houver contrato assinado.
+        if (list.some((c) => c.status === 'ativo')) {
+          refreshStudentFromApi()
+        }
+      })
       .catch(() => {
         /* vigência/agenda usam plano do cadastro se a API falhar */
       })
@@ -199,58 +262,47 @@ export function StudentProfile({ student: initial }: { student: Student }) {
     label: `${planPeriodLabel[p.period]} · ${p.frequencyLabel} — ${formatCurrency(p.price)}`,
   }))
 
-  const currentContract = useMemo(() => {
-    const priority: Record<string, number> = {
-      ativo: 0,
-      pendente_assinatura: 1,
-      rascunho: 2,
-      encerrado: 3,
-      cancelado: 4,
-    }
-    return (
-      contracts
-        .slice()
-        .sort((a, b) => {
-          const byStatus =
-            (priority[a.status] ?? 9) - (priority[b.status] ?? 9)
-          if (byStatus !== 0) return byStatus
-          return b.startDate.localeCompare(a.startDate)
-        })[0] ?? null
-    )
-  }, [contracts])
-
-  /** Plano do contrato ativo (status ativo); cai no plano do cadastro se não houver. */
-  const activeContract = useMemo(
+  /** Contrato assinado (ativo) — sem ele, financeiro e agenda ficam vazios. */
+  const governingContract = useMemo(
     () => contracts.find((c) => c.status === 'ativo') ?? null,
     [contracts],
   )
-  const effectivePlanId = activeContract?.planId ?? student.planId
-  const effectivePlan = getPlan(effectivePlanId)
-  const effectiveWeeklyLimit = effectivePlan?.frequency ?? 1
+  const hasSignedContract = Boolean(governingContract)
+
+  const effectivePlanId = governingContract?.planId ?? ''
+  const effectivePlan = effectivePlanId ? getPlan(effectivePlanId) : undefined
+  const effectiveWeeklyLimit = effectivePlan?.frequency ?? null
+  const effectiveMonthlyValue = governingContract?.monthlyValue
+  const effectiveDiscountPercent = governingContract?.discountPercent
+  const effectiveDueDay = governingContract?.dueDay
+  const effectivePaymentMethod = governingContract?.paymentMethod
+  const contractSourceLabel = governingContract ? 'contrato ativo' : null
 
   const planVigencia = useMemo(() => {
-    if (currentContract) {
-      return {
-        startDate: currentContract.startDate,
-        endDate: currentContract.endDate,
-      }
-    }
-    const plan = plans.find((p) => p.id === student.planId)
-    if (!plan) return null
+    if (!governingContract) return null
     return {
-      startDate: student.since,
-      endDate: contractEndDateForPeriod(student.since, plan.period),
+      startDate: governingContract.startDate,
+      endDate: governingContract.endDate,
     }
-  }, [currentContract, plans, student.planId, student.since])
+  }, [governingContract])
 
   const planVigenciaHint = useMemo(() => {
-    const planId = currentContract?.planId ?? student.planId
-    const plan = plans.find((p) => p.id === planId)
+    if (!governingContract) return null
+    const plan = plans.find((p) => p.id === governingContract.planId)
     if (!plan) return null
     const months = planPeriodMonths(plan.period)
-    const total = planTotalClassesFromPlan(plan)
+    const total = contractTotalClasses({
+      startDate: governingContract.startDate,
+      endDate: governingContract.endDate,
+      frequency: plan.frequency,
+      schedule: student.schedule,
+      planId: plan.id,
+    })
     return `${months} ${months === 1 ? 'mês' : 'meses'} · ${total} aulas`
-  }, [currentContract, plans, student.planId])
+  }, [governingContract, plans, student.schedule])
+
+  /** Agenda exibida: só com contrato assinado. */
+  const displaySchedule = hasSignedContract ? student.schedule : []
 
   const sortedAssessments = useMemo(
     () =>
@@ -285,7 +337,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
       const updated = await updateStudent(student.id, patch)
       setStudent(updated)
       // Mantém o mock em memória sincronizado para módulos ainda não migrados
-      patchStudent(student.id, updated)
+      patchStudent(student.id, updated) || upsertStudentInStore(updated)
       return updated
     } catch (error) {
       toast.error(
@@ -516,11 +568,26 @@ export function StudentProfile({ student: initial }: { student: Student }) {
   }
 
   function addScheduleSlot() {
+    if (!hasSignedContract || effectiveWeeklyLimit == null) {
+      toast.error('Contrato necessário', {
+        description:
+          'Assine um contrato ativo antes de definir a agenda fixa do aluno.',
+      })
+      return
+    }
     const limit = effectiveWeeklyLimit
     if (student.schedule.length >= limit) {
       toast.error('Limite do plano atingido', {
         description: `O plano permite no máximo ${limit} aula(s) fixa(s) por semana. Use a seção de frequência abaixo para marcar reposição.`,
       })
+      return
+    }
+    if (scheduleSlotOptions.length === 0) {
+      toast.error('Estúdio fechado neste dia')
+      return
+    }
+    if (!scheduleSlotOptions.includes(slotTime)) {
+      toast.error('Horário fora do funcionamento do estúdio')
       return
     }
     const exists = student.schedule.some(
@@ -563,7 +630,11 @@ export function StudentProfile({ student: initial }: { student: Student }) {
     <>
       <PageHeader
         title={student.name}
-        description={`${age(student.birthDate)} anos · ${planName(student.planId)}`}
+        description={`${age(student.birthDate)} anos · ${
+          hasSignedContract
+            ? governingContract?.planLabel || planName(effectivePlanId)
+            : 'Sem contrato ativo'
+        }`}
       >
         <Button
           variant="ghost"
@@ -1120,43 +1191,42 @@ export function StudentProfile({ student: initial }: { student: Student }) {
               <CardHeader>
                 <CardTitle>Plano e cobrança</CardTitle>
                 <CardDescription>
-                  Desconto individual recalcula o valor final automaticamente
+                  {hasSignedContract
+                    ? 'Valores do contrato ativo (assinado) — altere pelo contrato para atualizar financeiro e agenda'
+                    : 'Disponível após assinatura de um contrato. Rascunhos não preenchem estes dados.'}
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                {!hasSignedContract ? (
+                  <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                    Sem contrato assinado. Plano, valores e cobrança ficam
+                    vazios até um contrato ser ativado.
+                  </p>
+                ) : (
                 <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
-                  <InlineField
-                    label="Plano"
-                    value={student.planId}
-                    displayValue={planName(student.planId)}
-                    type="select"
-                    options={planOptions}
-                    onSave={(v) => {
-                      const plan = getPlan(v)
-                      const limit = plan?.frequency ?? 1
-                      const previousCount = student.schedule.length
-                      syncStudent({
-                        planId: v,
-                        monthlyValue: plan
-                          ? studentChargedValue(
-                              plan,
-                              student.discountPercent ?? 0,
-                            )
-                          : student.monthlyValue,
-                      })
-                      if (previousCount > limit) {
-                        toast.message('Agenda fixa ajustada', {
-                          description: `O novo plano permite ${limit} aula(s)/semana. Horários extras foram removidos. Reposições ficam na seção de frequência.`,
-                        })
-                      }
-                    }}
-                  />
+                  <div className="flex flex-col gap-0.5 py-2">
+                    <dt className="text-xs text-muted-foreground">
+                      Plano ({contractSourceLabel})
+                    </dt>
+                    <dd className="text-sm font-medium">
+                      {governingContract!.planLabel ||
+                        planName(effectivePlanId)}
+                      <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                        Agenda fixa limitada a{' '}
+                        {effectiveWeeklyLimit != null
+                          ? `${effectiveWeeklyLimit}x/semana`
+                          : '—'}
+                      </span>
+                    </dd>
+                  </div>
                   <div className="flex flex-col gap-0.5 py-2">
                     <dt className="text-xs text-muted-foreground">
                       Valor do plano
                     </dt>
                     <dd className="text-sm tabular-nums">
-                      {formatCurrency(getPlan(student.planId)?.price ?? 0)}
+                      {formatCurrency(
+                        getPlan(effectivePlanId)?.price ?? 0,
+                      )}
                     </dd>
                   </div>
                   <div className="flex flex-col gap-0.5 py-2">
@@ -1179,53 +1249,40 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                       )}
                     </dd>
                   </div>
-                  <InlineField
-                    label="Desconto (%)"
-                    value={String(student.discountPercent ?? 0)}
-                    displayValue={`${student.discountPercent ?? 0}%`}
-                    type="number"
-                    onSave={(v) => {
-                      const discountPercent = Math.min(
-                        100,
-                        Math.max(0, Number(v) || 0),
-                      )
-                      const plan = getPlan(student.planId)
-                      syncStudent({
-                        discountPercent,
-                        monthlyValue: plan
-                          ? studentChargedValue(plan, discountPercent)
-                          : student.monthlyValue,
-                      })
-                    }}
-                  />
-                  <InlineField
-                    label="Valor final"
-                    value={String(student.monthlyValue)}
-                    displayValue={formatCurrency(student.monthlyValue)}
-                    type="number"
-                    onSave={(v) =>
-                      updateField('monthlyValue', Number(v) || 0)
-                    }
-                  />
-                  <InlineField
-                    label="Dia de vencimento"
-                    value={String(student.dueDay)}
-                    displayValue={`Dia ${student.dueDay}`}
-                    type="number"
-                    onSave={(v) => {
-                      const day = Math.min(28, Math.max(1, Number(v) || 1))
-                      updateField('dueDay', day)
-                    }}
-                  />
-                  <InlineField
-                    label="Forma de pagamento"
-                    value={student.paymentMethod}
-                    type="select"
-                    options={paymentOptions}
-                    onSave={(v) =>
-                      updateField('paymentMethod', v as PaymentMethod)
-                    }
-                  />
+                  <div className="flex flex-col gap-0.5 py-2">
+                    <dt className="text-xs text-muted-foreground">
+                      Desconto (%)
+                    </dt>
+                    <dd className="text-sm tabular-nums">
+                      {effectiveDiscountPercent ?? 0}%
+                    </dd>
+                  </div>
+                  <div className="flex flex-col gap-0.5 py-2">
+                    <dt className="text-xs text-muted-foreground">
+                      Valor final
+                    </dt>
+                    <dd className="text-sm font-medium tabular-nums">
+                      {formatCurrency(effectiveMonthlyValue ?? 0)}
+                    </dd>
+                  </div>
+                  <div className="flex flex-col gap-0.5 py-2">
+                    <dt className="text-xs text-muted-foreground">
+                      Dia de vencimento
+                    </dt>
+                    <dd className="text-sm">
+                      {effectiveDueDay != null
+                        ? `Dia ${effectiveDueDay}`
+                        : '—'}
+                    </dd>
+                  </div>
+                  <div className="flex flex-col gap-0.5 py-2">
+                    <dt className="text-xs text-muted-foreground">
+                      Forma de pagamento
+                    </dt>
+                    <dd className="text-sm">
+                      {effectivePaymentMethod ?? '—'}
+                    </dd>
+                  </div>
                   <div className="flex flex-col gap-0.5 py-2">
                     <dt className="text-xs text-muted-foreground">
                       Status financeiro
@@ -1275,9 +1332,20 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                     </dd>
                   </div>
                 </dl>
+                )}
               </CardContent>
             </Card>
 
+            {!hasSignedContract ? (
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                    Sem cobranças. As parcelas aparecem após a assinatura do
+                    contrato.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
             <Card className="overflow-hidden py-0">
               <Table>
                 <TableHeader>
@@ -1431,10 +1499,17 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                 </TableBody>
               </Table>
             </Card>
+            )}
           </TabsContent>
 
           <TabsContent value="contratos" className="flex flex-col gap-4">
-            <StudentContractsPanel student={student} />
+            <StudentContractsPanel
+              student={student}
+              onContractsChanged={() => {
+                loadContracts()
+                refreshStudentFromApi()
+              }}
+            />
           </TabsContent>
 
           <TabsContent value="agenda" className="flex flex-col gap-6">
@@ -1442,123 +1517,188 @@ export function StudentProfile({ student: initial }: { student: Student }) {
               <CardHeader>
                 <CardTitle>Agenda fixa</CardTitle>
                 <CardDescription>
-                  Vinculada ao plano {planName(effectivePlanId)}
-                  {activeContract ? ' (contrato ativo)' : ''} ·{' '}
-                  {student.schedule.length}/{effectiveWeeklyLimit} horário(s) na
-                  semana. Reposições ficam na seção de frequência abaixo.
+                  {hasSignedContract
+                    ? `Vinculada ao plano ${
+                        governingContract?.planLabel ||
+                        planName(effectivePlanId)
+                      } (${contractSourceLabel}) · ${
+                        displaySchedule.length
+                      }/${effectiveWeeklyLimit ?? '—'} horário(s) na semana. Reposições ficam na seção de frequência abaixo.`
+                    : 'Disponível após assinatura de um contrato. Sem contrato ativo a agenda fica vazia.'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                  <div className="grid flex-1 grid-cols-2 gap-3">
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-xs text-muted-foreground">Dia</span>
-                      <Select
-                        value={slotWeekday}
-                        onValueChange={(v) =>
-                          setSlotWeekday((v as Weekday) ?? 'Segunda')
-                        }
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            {weekdays.map((d) => (
-                              <SelectItem key={d} value={d}>
-                                {d}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-xs text-muted-foreground">
-                        Horário
-                      </span>
-                      <Select
-                        value={slotTime}
-                        onValueChange={(v) => setSlotTime(v ?? '08:00')}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            <SelectLabel>Manhã</SelectLabel>
-                            {morningSlots.map((t) => (
-                              <SelectItem key={t} value={t}>
-                                {t}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                          <SelectGroup>
-                            <SelectLabel>Tarde</SelectLabel>
-                            {afternoonSlots.map((t) => (
-                              <SelectItem key={t} value={t}>
-                                {t}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={addScheduleSlot}
-                    disabled={
-                      student.schedule.length >= effectiveWeeklyLimit
-                    }
-                  >
-                    <Plus data-icon="inline-start" />
-                    Adicionar horário
-                  </Button>
-                </div>
-
-                {student.schedule.length >= effectiveWeeklyLimit ? (
-                  <p className="text-xs text-muted-foreground">
-                    Limite do plano atingido. Para reposição ou aula extra, use a
-                    seção de frequência abaixo.
-                  </p>
-                ) : null}
-
-                {student.schedule.length === 0 ? (
+                {!hasSignedContract ? (
                   <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                    Nenhum horário fixo. Adicione até {effectiveWeeklyLimit}{' '}
-                    dia(s) conforme o plano.
+                    Sem contrato assinado. Defina a agenda fixa depois de ativar
+                    um contrato.
                   </p>
                 ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {student.schedule.map((slot) => (
-                      <Badge
-                        key={slot.weekday + slot.time}
-                        variant="outline"
-                        className="gap-1.5 px-3 py-1.5 text-sm"
+                  <>
+                    <div className="grid gap-3 rounded-xl border p-4 sm:grid-cols-[1fr_auto] sm:items-end">
+                      <div className="grid flex-1 grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-xs text-muted-foreground">Dia</span>
+                          <Select
+                            value={slotWeekday}
+                            onValueChange={(v) =>
+                              setSlotWeekday((v as Weekday) ?? 'Segunda')
+                            }
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                {weekdays.map((d) => (
+                                  <SelectItem key={d} value={d}>
+                                    {d}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-xs text-muted-foreground">
+                            Horário
+                          </span>
+                          <Select
+                            value={slotTime}
+                            onValueChange={(v) => setSlotTime(v ?? '08:00')}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {scheduleMorningOptions.length > 0 ? (
+                                <SelectGroup>
+                                  <SelectLabel>Manhã</SelectLabel>
+                                  {scheduleMorningOptions.map((t) => (
+                                    <SelectItem key={t} value={t}>
+                                      {t}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              ) : null}
+                              {scheduleAfternoonOptions.length > 0 ? (
+                                <SelectGroup>
+                                  <SelectLabel>Tarde</SelectLabel>
+                                  {scheduleAfternoonOptions.map((t) => (
+                                    <SelectItem key={t} value={t}>
+                                      {t}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              ) : null}
+                              {scheduleSlotOptions.length === 0 ? (
+                                <SelectGroup>
+                                  <SelectItem value={slotTime} disabled>
+                                    Estúdio fechado neste dia
+                                  </SelectItem>
+                                </SelectGroup>
+                              ) : null}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={addScheduleSlot}
+                        disabled={
+                          effectiveWeeklyLimit == null ||
+                          displaySchedule.length >= effectiveWeeklyLimit ||
+                          scheduleSlotOptions.length === 0
+                        }
                       >
-                        <CalendarClock className="size-3.5 text-muted-foreground" />
-                        {slot.weekday} · {slot.time}
-                        <button
-                          type="button"
-                          onClick={() => removeScheduleSlot(slot)}
-                          className="ml-0.5 rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          aria-label={`Remover ${slot.weekday} ${slot.time}`}
-                        >
-                          <Trash2 className="size-3" />
-                        </button>
-                      </Badge>
-                    ))}
-                  </div>
+                        <Plus data-icon="inline-start" />
+                        Adicionar horário
+                      </Button>
+                    </div>
+
+                    {effectiveWeeklyLimit != null &&
+                    displaySchedule.length >= effectiveWeeklyLimit ? (
+                      <p className="text-xs text-muted-foreground">
+                        Limite do plano atingido. Para reposição ou aula extra, use a
+                        seção de frequência abaixo.
+                      </p>
+                    ) : null}
+
+                    {displaySchedule.length === 0 ? (
+                      <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                        Nenhum horário fixo
+                        {effectiveWeeklyLimit != null
+                          ? `. Adicione até ${effectiveWeeklyLimit} dia(s) conforme o plano.`
+                          : '.'}
+                      </p>
+                    ) : (
+                      <div className="flex flex-col gap-3 rounded-xl border p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium">Horários ativos</p>
+                            <p className="text-xs text-muted-foreground">
+                              Remova um horário para trocar a grade fixa do aluno.
+                            </p>
+                          </div>
+                          <Badge variant="secondary">
+                            {displaySchedule.length} cadastrado(s)
+                          </Badge>
+                        </div>
+                        <Separator />
+                        <div className="flex flex-wrap gap-2">
+                          {displaySchedule.map((slot) => (
+                            <Badge
+                              key={slot.weekday + slot.time}
+                              variant="outline"
+                              className="gap-1.5 px-3 py-1.5 text-sm"
+                            >
+                              <CalendarClock className="size-3.5 text-muted-foreground" />
+                              {slot.weekday} · {slot.time}
+                              <button
+                                type="button"
+                                onClick={() => removeScheduleSlot(slot)}
+                                className="ml-0.5 rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                aria-label={`Remover ${slot.weekday} ${slot.time}`}
+                              >
+                                <Trash2 className="size-3" />
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
 
+            {hasSignedContract ? (
             <StudentAttendancePanel
               studentId={student.id}
-              fallbackPlanId={student.planId}
+              schedule={displaySchedule}
+              planId={effectivePlanId}
+              fallbackPlanId={effectivePlanId}
+              historyFrom={governingContract!.startDate}
+              historyTo={governingContract!.endDate}
               plans={plans}
             />
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Frequência e presença
+                  </CardTitle>
+                  <CardDescription>
+                    O histórico de aulas aparece após a assinatura do contrato.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                    Sem contrato assinado. Nenhuma aula para exibir.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       </div>

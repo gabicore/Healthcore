@@ -27,19 +27,27 @@ import {
 } from '@/components/ui/select'
 import {
   SLOT_CAPACITY,
-  students,
-  professionals,
-  morningSlots,
   afternoonSlots,
   availableSlotsForWeekday,
   countActiveInSlot,
   getWeekdayFromDate,
+  morningSlots,
   parseIsoDate,
+  replaceScheduleSlots,
+  replaceStudioHours,
   toIsoDate,
   type AttendanceStatus,
   type ClassSession,
   type ClassSessionType,
+  type Professional,
+  type Student,
 } from '@/lib/data'
+import { fetchStudents } from '@/lib/students-api'
+import {
+  fetchProfessionals,
+  fetchStudioHours,
+  fetchTimeSlots,
+} from '@/lib/settings-api'
 
 type NewClassDialogProps = {
   defaultDate?: string
@@ -52,6 +60,8 @@ type NewClassDialogProps = {
   open?: boolean
   onOpenChange?: (open: boolean) => void
   sessions?: ClassSession[]
+  /** Quando informado, o diálogo edita a aula existente. */
+  editingSession?: ClassSession | null
   onCreate: (session: ClassSession) => void
 }
 
@@ -66,13 +76,17 @@ export function NewClassDialog({
   open: controlledOpen,
   onOpenChange,
   sessions = [],
+  editingSession = null,
   onCreate,
 }: NewClassDialogProps) {
-  const todayIso = toIsoDate(new Date())
+  const todayIso = useMemo(() => toIsoDate(new Date()), [])
   const isControlled = controlledOpen !== undefined
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
   const open = isControlled ? controlledOpen : uncontrolledOpen
+  const isEditing = Boolean(editingSession)
 
+  const [students, setStudents] = useState<Student[]>([])
+  const [professionals, setProfessionals] = useState<Professional[]>([])
   const [studentId, setStudentId] = useState('')
   const [guestName, setGuestName] = useState('')
   const [date, setDate] = useState(defaultDate ?? todayIso)
@@ -80,14 +94,15 @@ export function NewClassDialog({
   const [type, setType] = useState<ClassSessionType>(
     defaultType === 'fixa' ? 'reposicao' : defaultType,
   )
-  const [professionalId, setProfessionalId] = useState(professionals[0].id)
+  const [professionalId, setProfessionalId] = useState('')
   const [notes, setNotes] = useState('')
 
+  const [hoursTick, setHoursTick] = useState(0)
   const isExperimental = type === 'experimental'
 
   const activeStudents = useMemo(
     () => students.filter((s) => s.active),
-    [],
+    [students],
   )
 
   const weekday = useMemo(() => {
@@ -96,31 +111,99 @@ export function NewClassDialog({
   }, [date])
 
   const slots = useMemo(() => {
+    void hoursTick
     if (!weekday) return [...morningSlots, ...afternoonSlots]
     return availableSlotsForWeekday(weekday)
-  }, [weekday])
+  }, [weekday, hoursTick])
 
-  const occupied = weekday
-    ? countActiveInSlot(sessions, date, time)
-    : 0
-  const remaining = Math.max(0, SLOT_CAPACITY - occupied)
+  const slotCapacity = useMemo(() => {
+    void hoursTick
+    return SLOT_CAPACITY
+  }, [hoursTick])
+
+  const occupiedRaw = weekday ? countActiveInSlot(sessions, date, time) : 0
+  const occupied =
+    editingSession &&
+    editingSession.date === date &&
+    editingSession.time === time &&
+    editingSession.status !== 'cancelada'
+      ? Math.max(0, occupiedRaw - 1)
+      : occupiedRaw
+  const remaining = Math.max(0, slotCapacity - occupied)
 
   useEffect(() => {
     if (!open) return
-    setDate(defaultDate ?? todayIso)
-    setTime(
-      defaultTime && slots.includes(defaultTime)
-        ? defaultTime
-        : (slots[0] ?? '08:00'),
-    )
-    setType(defaultType === 'fixa' ? 'reposicao' : defaultType)
-  }, [open, defaultDate, defaultTime, defaultType, todayIso, slots])
+    let cancelled = false
+    void Promise.all([
+      fetchStudents({ active: true }),
+      fetchProfessionals(),
+      fetchStudioHours(),
+      fetchTimeSlots(),
+    ])
+      .then(([studentList, professionalList, hours, timeSlots]) => {
+        if (cancelled) return
+        replaceStudioHours(hours)
+        replaceScheduleSlots(timeSlots)
+        setHoursTick((t) => t + 1)
+        setStudents(studentList)
+        setProfessionals(professionalList)
+        setProfessionalId((current) => {
+          if (editingSession?.professionalId) return editingSession.professionalId
+          return current || professionalList[0]?.id || ''
+        })
+      })
+      .catch(() => {
+        if (!cancelled) {
+          toast.error('Não foi possível carregar alunos/profissionais')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, editingSession?.professionalId])
 
   useEffect(() => {
-    if (!slots.includes(time) && slots.length > 0) {
+    if (!open || !weekday) return
+    if (slots.length > 0 && !slots.includes(time)) {
       setTime(slots[0])
     }
-  }, [slots, time])
+  }, [open, weekday, slots, time])
+
+  // Só reinicia o formulário ao abrir o diálogo — não ao mudar a data.
+  useEffect(() => {
+    if (!open) return
+    if (editingSession) {
+      const linkedStudent =
+        editingSession.studentId && !editingSession.studentId.startsWith('guest-')
+          ? editingSession.studentId
+          : ''
+      setDate(editingSession.date)
+      setTime(editingSession.time)
+      setType(
+        editingSession.type === 'fixa' ? 'reposicao' : editingSession.type,
+      )
+      setStudentId(linkedStudent)
+      setGuestName(editingSession.guestName ?? '')
+      setProfessionalId(editingSession.professionalId ?? '')
+      setNotes(editingSession.notes ?? '')
+      return
+    }
+    const nextDate = defaultDate ?? todayIso
+    const nextWeekday = getWeekdayFromDate(parseIsoDate(nextDate))
+    const nextSlots = nextWeekday
+      ? availableSlotsForWeekday(nextWeekday)
+      : [...morningSlots, ...afternoonSlots]
+    setDate(nextDate)
+    setTime(
+      defaultTime && nextSlots.includes(defaultTime)
+        ? defaultTime
+        : (nextSlots[0] ?? '08:00'),
+    )
+    setType(defaultType === 'fixa' ? 'reposicao' : defaultType)
+    setStudentId('')
+    setGuestName('')
+    setNotes('')
+  }, [open, editingSession, defaultDate, defaultTime, defaultType, todayIso])
 
   function setOpen(next: boolean) {
     if (!isControlled) setUncontrolledOpen(next)
@@ -133,7 +216,7 @@ export function NewClassDialog({
     setDate(defaultDate ?? todayIso)
     setTime(defaultTime ?? '08:00')
     setType(defaultType === 'fixa' ? 'reposicao' : defaultType)
-    setProfessionalId(professionals[0].id)
+    setProfessionalId(professionals[0]?.id ?? '')
     setNotes('')
   }
 
@@ -165,26 +248,37 @@ export function NewClassDialog({
       return
     }
 
+    if (slots.length === 0) {
+      toast.error('Estúdio fechado neste dia')
+      return
+    }
+
     if (!slots.includes(time)) {
-      toast.error('Horário indisponível neste dia')
+      toast.error('Horário indisponível neste dia', {
+        description: 'Fora do funcionamento do estúdio ou da grade.',
+      })
       return
     }
 
     if (remaining <= 0) {
       toast.error('Horário lotado', {
-        description: `Máximo de ${SLOT_CAPACITY} alunos por horário.`,
+        description: `Máximo de ${slotCapacity} alunos por horário.`,
       })
       return
     }
 
+    const selectedStudent = students.find((s) => s.id === studentId)
     const resolvedStudentId =
-      studentId || `guest-${Date.now()}`
+      studentId ||
+      editingSession?.studentId ||
+      `guest-${Date.now()}`
     const resolvedGuestName = isExperimental
-      ? guestName.trim() || undefined
+      ? guestName.trim() || selectedStudent?.name || undefined
       : undefined
 
     const alreadyBooked = sessions.some(
       (s) =>
+        s.id !== editingSession?.id &&
         s.date === date &&
         s.time === time &&
         s.status !== 'cancelada' &&
@@ -209,11 +303,16 @@ export function NewClassDialog({
         : type === 'experimental'
           ? 'experimental'
           : 'reposicao'
-    const status: AttendanceStatus =
-      sessionType === 'reposicao' ? 'reposicao' : 'agendada'
+    const status: AttendanceStatus = isEditing
+      ? editingSession!.status === 'reposicao' && sessionType !== 'reposicao'
+        ? 'agendada'
+        : editingSession!.status
+      : 'agendada'
 
     onCreate({
-      id: `manual-${resolvedStudentId}-${date}-${time}-${Date.now()}`,
+      id:
+        editingSession?.id ??
+        `manual-${resolvedStudentId}-${date}-${time}-${Date.now()}`,
       studentId: resolvedStudentId,
       guestName: resolvedGuestName,
       date,
@@ -221,25 +320,40 @@ export function NewClassDialog({
       time,
       status,
       type: sessionType,
-      professionalId,
+      professionalId: professionalId || undefined,
       notes: notes.trim() || undefined,
     })
 
     handleOpenChange(false)
-    const successLabel =
-      sessionType === 'reposicao'
-        ? 'Reposição agendada'
-        : sessionType === 'experimental'
-          ? 'Aula experimental marcada'
-          : 'Aula avulsa marcada'
-    toast.success(successLabel, {
-      description:
-        'A alteração será salva quando o banco de dados for conectado.',
-    })
+    toast.success(
+      isEditing
+        ? 'Aula atualizada'
+        : sessionType === 'reposicao'
+          ? 'Reposição agendada'
+          : sessionType === 'experimental'
+            ? 'Aula experimental marcada'
+            : 'Aula avulsa marcada',
+    )
   }
 
+  const typeLabel: Record<'reposicao' | 'avulsa' | 'experimental', string> = {
+    reposicao: 'Reposição',
+    avulsa: 'Avulsa',
+    experimental: 'Experimental',
+  }
+  const selectedType = type === 'fixa' ? 'reposicao' : type
   const morningOptions = slots.filter((t) => morningSlots.includes(t))
   const afternoonOptions = slots.filter((t) => afternoonSlots.includes(t))
+  const selectedProfessional =
+    professionals.find((p) => p.id === professionalId)?.name ?? 'Selecione'
+  const dialogTitle = isEditing
+    ? editingSession?.type === 'experimental'
+      ? 'Editar experimental'
+      : 'Editar aula'
+    : title
+  const dialogDescription = isEditing
+    ? 'Altere data, horário, cliente ou profissional desta aula.'
+    : description
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -253,31 +367,33 @@ export function NewClassDialog({
           }
         />
       ) : null}
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
+          <DialogTitle>{dialogTitle}</DialogTitle>
+          <DialogDescription>{dialogDescription}</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <FieldGroup>
             <Field>
               <FieldLabel>Tipo</FieldLabel>
               <Select
-                value={type === 'fixa' ? 'reposicao' : type}
+                value={selectedType}
                 onValueChange={(v) =>
                   setType((v as ClassSessionType) ?? 'reposicao')
                 }
+                disabled={isEditing && editingSession?.type === 'experimental'}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue />
+                  <SelectValue>
+                    {typeLabel[selectedType as keyof typeof typeLabel] ??
+                      selectedType}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
                     <SelectItem value="reposicao">Reposição</SelectItem>
                     <SelectItem value="avulsa">Avulsa</SelectItem>
-                    <SelectItem value="experimental">
-                      Experimental
-                    </SelectItem>
+                    <SelectItem value="experimental">Experimental</SelectItem>
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -285,9 +401,7 @@ export function NewClassDialog({
 
             {isExperimental ? (
               <Field>
-                <FieldLabel htmlFor="guest-name">
-                  Nome do cliente
-                </FieldLabel>
+                <FieldLabel htmlFor="guest-name">Nome do cliente</FieldLabel>
                 <Input
                   id="guest-name"
                   value={guestName}
@@ -300,9 +414,7 @@ export function NewClassDialog({
 
             <Field>
               <FieldLabel>
-                {isExperimental
-                  ? 'Aluno cadastrado (opcional)'
-                  : 'Aluno'}
+                {isExperimental ? 'Aluno cadastrado (opcional)' : 'Aluno'}
               </FieldLabel>
               <Select
                 value={studentId || null}
@@ -358,7 +470,7 @@ export function NewClassDialog({
                   onValueChange={(v) => setTime(v ?? slots[0] ?? '08:00')}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue>{time}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {morningOptions.length > 0 ? (
@@ -387,13 +499,15 @@ export function NewClassDialog({
               <Field>
                 <FieldLabel>Profissional</FieldLabel>
                 <Select
-                  value={professionalId}
+                  value={professionalId || null}
                   onValueChange={(v) =>
-                    setProfessionalId(v ?? professionals[0].id)
+                    setProfessionalId(v ?? professionals[0]?.id ?? '')
                   }
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Selecione" />
+                    <SelectValue placeholder="Selecione">
+                      {selectedProfessional}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
@@ -415,7 +529,7 @@ export function NewClassDialog({
             >
               {remaining === 0
                 ? 'Horário lotado — escolha outro.'
-                : `${occupied}/${SLOT_CAPACITY} ocupadas · ${remaining} vaga(s) livre(s)`}
+                : `${occupied}/${slotCapacity} ocupadas · ${remaining} vaga(s) livre(s)`}
             </p>
 
             <Field>
@@ -441,7 +555,11 @@ export function NewClassDialog({
               Cancelar
             </Button>
             <Button type="submit" disabled={remaining === 0}>
-              {isExperimental ? 'Salvar experimental' : 'Salvar aula'}
+              {isEditing
+                ? 'Salvar alterações'
+                : isExperimental
+                  ? 'Salvar experimental'
+                  : 'Salvar aula'}
             </Button>
           </DialogFooter>
         </form>

@@ -77,15 +77,16 @@ import {
   type Student,
   contractEndDateForPeriod,
   contractStatusLabel,
+  contractTotalClasses,
   defaultContractClauses,
   formatCurrency,
   formatShortDate,
   paymentMethods,
   planPeriodLabel,
   planPeriodMonths,
-  planTotalClassesFromPlan,
   studentChargedValue,
   toIsoDate,
+  type StudioProfile,
 } from '@/lib/data'
 import {
   contractAction,
@@ -94,7 +95,7 @@ import {
   fetchStudentContracts,
   updateContract,
 } from '@/lib/contracts-api'
-import { fetchPlans } from '@/lib/settings-api'
+import { fetchPlans, fetchStudio } from '@/lib/settings-api'
 import { cn } from '@/lib/utils'
 
 /** Valor de tabela do plano no contrato (com fallback a partir do valor cobrado). */
@@ -194,11 +195,16 @@ function escapeHtml(value: string) {
 
 type StudentContractsPanelProps = {
   student: Student
+  onContractsChanged?: () => void
 }
 
-export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
+export function StudentContractsPanel({
+  student,
+  onContractsChanged,
+}: StudentContractsPanelProps) {
   const [list, setList] = useState<Contract[]>([])
   const [plans, setPlans] = useState<Plan[]>([])
+  const [studio, setStudio] = useState<StudioProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -225,8 +231,17 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     [createPlan, createDiscount],
   )
   const createTotalClasses = useMemo(
-    () => (createPlan ? planTotalClassesFromPlan(createPlan) : 0),
-    [createPlan],
+    () =>
+      createPlan && createStart && createEnd
+        ? contractTotalClasses({
+            startDate: createStart,
+            endDate: createEnd,
+            frequency: createPlan.frequency,
+            schedule: student.schedule,
+            planId: createPlan.id,
+          })
+        : 0,
+    [createPlan, createStart, createEnd, student.schedule],
   )
 
   useEffect(() => {
@@ -252,6 +267,13 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
   }
 
   function openCreateDialog() {
+    if (activeContract) {
+      toast.error('Contrato ativo existente', {
+        description:
+          'Encerre ou rescinda o contrato ativo antes de criar um novo.',
+      })
+      return
+    }
     resetCreateForm()
     setCreateOpen(true)
   }
@@ -289,7 +311,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
         status: 'rascunho',
       })
       setCreateOpen(false)
-      await loadContracts()
+      await loadContracts(true)
       setSelectedId(created.id)
       setEditing(false)
       notify('Contrato criado', created.number)
@@ -304,9 +326,10 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     }
   }
 
-  async function loadContracts() {
+  async function loadContracts(notify = false) {
     const data = await fetchStudentContracts(student.id)
     setList(data)
+    if (notify) onContractsChanged?.()
     return data
   }
 
@@ -318,6 +341,11 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
       })
       .catch(() => {
         toast.error('Não foi possível carregar os planos')
+      })
+    void fetchStudio()
+      .then(setStudio)
+      .catch(() => {
+        /* contrato usa fallback se a API falhar */
       })
   }, [student.planId])
 
@@ -348,6 +376,10 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
   const selected = useMemo(
     () => list.find((c) => c.id === selectedId) ?? null,
     [list, selectedId],
+  )
+  const activeContract = useMemo(
+    () => list.find((c) => c.status === 'ativo') ?? null,
+    [list],
   )
 
   useEffect(() => {
@@ -441,7 +473,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
         historyAction: 'Contrato e cláusulas editados',
       })
       setEditing(false)
-      await loadContracts()
+      await loadContracts(true)
       notify('Contrato atualizado', next.number)
     } catch (err: unknown) {
       toast.error(
@@ -461,7 +493,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
       await deleteContract(contract.id)
       setSelectedId(null)
       setEditing(false)
-      await loadContracts()
+      await loadContracts(true)
       notify('Contrato apagado', contract.number)
     } catch (err: unknown) {
       toast.error(
@@ -476,7 +508,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     setBusyAction('send')
     try {
       const next = (await contractAction(contract.id, 'send')) as Contract
-      await loadContracts()
+      await loadContracts(true)
       notify(
         'Enviado para assinatura',
         `${next.number} · ${student.email || 'sem e-mail'}`,
@@ -504,7 +536,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
       const next = (await contractAction(contract.id, 'sign', {
         signatureName: signatureName.trim(),
       })) as Contract
-      await loadContracts()
+      await loadContracts(true)
       notify('Assinatura registrada', `${next.number} · contrato ativo`)
     } catch (err: unknown) {
       toast.error(
@@ -527,7 +559,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
       const result = (await contractAction(contract.id, 'email')) as {
         emailedTo: string
       }
-      await loadContracts()
+      await loadContracts(true)
       notify(
         'Contrato enviado por e-mail',
         `${result.emailedTo} (em dev o conteúdo aparece no log do servidor)`,
@@ -547,7 +579,28 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     const clauses = contract.clauses
       .map((c) => `<li>${escapeHtml(c)}</li>`)
       .join('')
+    const plan = plans.find((p) => p.id === contract.planId)
     const planPrice = resolvePlanPrice(contract, plans)
+    const totalClasses = plan
+      ? contractTotalClasses({
+          startDate: contract.startDate,
+          endDate: contract.endDate,
+          frequency: plan.frequency,
+          schedule: student.schedule,
+          planId: plan.id,
+        })
+      : 0
+    const months = plan ? planPeriodMonths(plan.period) : null
+    const vigenciaExtra = [
+      months
+        ? `${months} ${months === 1 ? 'mês' : 'meses'}`
+        : null,
+      totalClasses > 0 ? `${totalClasses} aulas` : null,
+      plan?.frequencyLabel ?? null,
+      `${formatShortDate(contract.startDate)} — ${formatShortDate(contract.endDate)}`,
+    ]
+      .filter(Boolean)
+      .join(' · ')
     const discountLabel =
       contract.discountPercent > 0
         ? `${contract.discountPercent}%${
@@ -556,6 +609,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
               : ''
           }`
         : 'Sem desconto'
+    const studioName = studio?.name ?? 'Estúdio'
     return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -583,21 +637,34 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     <button type="button" onclick="window.print()">Imprimir / Salvar PDF</button>
   </div>
   <h1>Contrato ${escapeHtml(contract.number)}</h1>
-  <p class="meta">HealthCore · Versão ${contract.version} · ${escapeHtml(contractStatusLabel[contract.status])}</p>
-  <h2>Partes</h2>
+  <p class="meta">${escapeHtml(studioName)} · Versão ${contract.version} · ${escapeHtml(contractStatusLabel[contract.status])}</p>
+  <h2>Contratado (estúdio)</h2>
+  <dl>
+    <div><dt>Razão / nome</dt><dd>${escapeHtml(studioName)}</dd></div>
+    <div><dt>Responsável</dt><dd>${escapeHtml(studio?.owner || '—')}</dd></div>
+    <div><dt>CNPJ</dt><dd>${escapeHtml(studio?.cnpj || '—')}</dd></div>
+    <div><dt>Telefone</dt><dd>${escapeHtml(studio?.phone || '—')}</dd></div>
+    <div><dt>E-mail</dt><dd>${escapeHtml(studio?.email || '—')}</dd></div>
+    <div><dt>Endereço</dt><dd>${escapeHtml(studio?.address || '—')}</dd></div>
+  </dl>
+  <h2>Contratante (aluno)</h2>
   <dl>
     <div><dt>Aluno</dt><dd>${escapeHtml(student.name)}</dd></div>
     <div><dt>CPF</dt><dd>${escapeHtml(student.cpf || '—')}</dd></div>
     <div><dt>E-mail</dt><dd>${escapeHtml(student.email || '—')}</dd></div>
+    <div><dt>Telefone</dt><dd>${escapeHtml(student.phone || '—')}</dd></div>
+    <div><dt>CEP</dt><dd>${escapeHtml(student.cep || '—')}</dd></div>
+    <div><dt>Endereço</dt><dd>${escapeHtml(student.address || '—')}</dd></div>
     <div><dt>Responsável financeiro</dt><dd>${escapeHtml(contract.financialResponsible)}</dd></div>
   </dl>
   <h2>Condições</h2>
   <dl>
     <div><dt>Plano</dt><dd>${escapeHtml(contract.planLabel)}</dd></div>
+    <div><dt>Aulas do contrato</dt><dd>${totalClasses > 0 ? `${totalClasses} aulas${plan?.frequencyLabel ? ` · ${escapeHtml(plan.frequencyLabel)}` : ''}` : '—'}</dd></div>
     <div><dt>Valor do plano</dt><dd>${escapeHtml(formatCurrency(planPrice))}</dd></div>
     <div><dt>Desconto</dt><dd>${discountLabel}</dd></div>
     <div><dt>Valor final</dt><dd>${escapeHtml(formatCurrency(contract.monthlyValue))}</dd></div>
-    <div><dt>Vigência</dt><dd>${escapeHtml(formatShortDate(contract.startDate))} — ${escapeHtml(formatShortDate(contract.endDate))}</dd></div>
+    <div><dt>Vigência</dt><dd>${escapeHtml(formatShortDate(contract.startDate))} — ${escapeHtml(formatShortDate(contract.endDate))}${vigenciaExtra ? `<br/><span style="font-size:12px;color:#555">${escapeHtml(vigenciaExtra)}</span>` : ''}</dd></div>
     <div><dt>Vencimento</dt><dd>Dia ${contract.dueDay}</dd></div>
     <div><dt>Pagamento</dt><dd>${escapeHtml(contract.paymentMethod)}</dd></div>
     <div><dt>Multa / juros</dt><dd>${contract.lateFeePercent}% / ${contract.interestPercent}% a.m.</dd></div>
@@ -605,7 +672,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
   </dl>
   <h2>Cláusulas</h2>
   <ol>${clauses}</ol>
-  <p class="footer">Documento gerado pelo HealthCore em ${escapeHtml(formatShortDate(toIsoDate(new Date())))}.</p>
+  <p class="footer">Documento gerado por ${escapeHtml(studioName)} via HealthCore em ${escapeHtml(formatShortDate(toIsoDate(new Date())))}.</p>
 </body>
 </html>`
   }
@@ -660,7 +727,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     setBusyAction('renew')
     try {
       const next = (await contractAction(contract.id, 'renew')) as Contract
-      await loadContracts()
+      await loadContracts(true)
       setSelectedId(next.id)
       setEditing(false)
       notify('Contrato renovado', `Novo rascunho ${next.number}`)
@@ -683,7 +750,7 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
     setBusyAction('rescind')
     try {
       const next = (await contractAction(contract.id, 'rescind')) as Contract
-      await loadContracts()
+      await loadContracts(true)
       notify('Contrato rescindido', next.number)
     } catch (err: unknown) {
       toast.error(
@@ -707,12 +774,27 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
               {student.name.split(' ')[0]}
             </CardDescription>
           </div>
-          <Button size="sm" onClick={openCreateDialog}>
+          <Button
+            size="sm"
+            onClick={openCreateDialog}
+            disabled={Boolean(activeContract)}
+            title={
+              activeContract
+                ? 'Encerre ou rescinda o contrato ativo para criar outro'
+                : undefined
+            }
+          >
             <Plus data-icon="inline-start" />
             Novo contrato
           </Button>
         </CardHeader>
         <CardContent>
+          {activeContract ? (
+            <p className="mb-4 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+              Já existe um contrato ativo ({activeContract.number}). Para criar
+              um novo, encerre ou rescinda o atual.
+            </p>
+          ) : null}
           {loading ? (
             <Empty className="border-0 py-8">
               <EmptyHeader>
@@ -730,7 +812,11 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                   Crie o primeiro contrato deste aluno para começar.
                 </EmptyDescription>
               </EmptyHeader>
-              <Button size="sm" onClick={openCreateDialog}>
+              <Button
+                size="sm"
+                onClick={openCreateDialog}
+                disabled={Boolean(activeContract)}
+              >
                 <Plus data-icon="inline-start" />
                 Novo contrato
               </Button>
@@ -842,7 +928,8 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
               </div>
               {createPlan ? (
                 <p className="text-xs text-muted-foreground">
-                  Vigência de {planPeriodMonths(createPlan.period)}{' '}
+                  {formatShortDate(createStart)} — {formatShortDate(createEnd)}{' '}
+                  · {planPeriodMonths(createPlan.period)}{' '}
                   {planPeriodMonths(createPlan.period) === 1 ? 'mês' : 'meses'}{' '}
                   · {createTotalClasses} aulas (
                   {createPlan.frequencyLabel})
@@ -1213,11 +1300,18 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                       {(() => {
                         const plan = plans.find((p) => p.id === form.planId)
                         if (!plan) return null
-                        const total = planTotalClassesFromPlan(plan)
+                        const total = contractTotalClasses({
+                          startDate: form.startDate,
+                          endDate: form.endDate,
+                          frequency: plan.frequency,
+                          schedule: student.schedule,
+                          planId: plan.id,
+                        })
                         const months = planPeriodMonths(plan.period)
                         return (
                           <p className="text-xs text-muted-foreground">
-                            Vigência de {months}{' '}
+                            {formatShortDate(form.startDate)} —{' '}
+                            {formatShortDate(form.endDate)} · {months}{' '}
                             {months === 1 ? 'mês' : 'meses'} · {total} aulas (
                             {plan.frequencyLabel})
                           </p>
@@ -1468,6 +1562,21 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                         value={selected.planLabel}
                       />
                       <DetailItem
+                        label="Aulas do contrato"
+                        value={(() => {
+                          const plan = plans.find((p) => p.id === selected.planId)
+                          if (!plan) return '—'
+                          const total = contractTotalClasses({
+                            startDate: selected.startDate,
+                            endDate: selected.endDate,
+                            frequency: plan.frequency,
+                            schedule: student.schedule,
+                            planId: plan.id,
+                          })
+                          return `${total} aulas · ${plan.frequencyLabel}`
+                        })()}
+                      />
+                      <DetailItem
                         label="Valor do plano"
                         value={formatCurrency(
                           resolvePlanPrice(selected, plans),
@@ -1495,7 +1604,28 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                       />
                       <DetailItem
                         label="Vigência"
-                        value={`${formatShortDate(selected.startDate)} — ${formatShortDate(selected.endDate)}`}
+                        value={(() => {
+                          const plan = plans.find((p) => p.id === selected.planId)
+                          const range = `${formatShortDate(selected.startDate)} — ${formatShortDate(selected.endDate)}`
+                          if (!plan) return range
+                          const months = planPeriodMonths(plan.period)
+                          const total = contractTotalClasses({
+                            startDate: selected.startDate,
+                            endDate: selected.endDate,
+                            frequency: plan.frequency,
+                            schedule: student.schedule,
+                            planId: plan.id,
+                          })
+                          return (
+                            <>
+                              {range}
+                              <span className="mt-0.5 block text-xs text-muted-foreground">
+                                {months} {months === 1 ? 'mês' : 'meses'} ·{' '}
+                                {total} aulas · {plan.frequencyLabel}
+                              </span>
+                            </>
+                          )
+                        })()}
                       />
                       <DetailItem
                         label="Forma de pagamento"
@@ -1505,6 +1635,19 @@ export function StudentContractsPanel({ student }: StudentContractsPanelProps) {
                         label="Multa e juros"
                         value={`Multa ${selected.lateFeePercent}% · juros ${selected.interestPercent}% a.m.`}
                       />
+                      {studio ? (
+                        <>
+                          <DetailItem label="Estúdio" value={studio.name} />
+                          <DetailItem
+                            label="CNPJ do estúdio"
+                            value={studio.cnpj || '—'}
+                          />
+                          <DetailItem
+                            label="Endereço do estúdio"
+                            value={studio.address || '—'}
+                          />
+                        </>
+                      ) : null}
                       <DetailItem
                         label="Assinatura digital"
                         value={

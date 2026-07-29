@@ -61,6 +61,8 @@ export function serializeStudio(row: DbStudio): StudioProfile {
     owner: row.owner,
     email: row.email,
     phone: row.phone,
+    cnpj: row.cnpj,
+    address: row.address,
     plan: row.plan,
   }
 }
@@ -70,6 +72,7 @@ export function serializeStudioHour(row: DbStudioHour): StudioHour {
     weekday: fromDbWeekday(row.weekday),
     open: row.open,
     close: row.close,
+    closed: row.closed,
   }
 }
 
@@ -228,6 +231,8 @@ export async function updateStudioRecord(input: UpdateStudioInput) {
       ...(input.owner !== undefined ? { owner: input.owner.trim() } : {}),
       ...(input.email !== undefined ? { email: input.email } : {}),
       ...(input.phone !== undefined ? { phone: input.phone } : {}),
+      ...(input.cnpj !== undefined ? { cnpj: input.cnpj.trim() } : {}),
+      ...(input.address !== undefined ? { address: input.address.trim() } : {}),
       ...(input.plan !== undefined ? { plan: input.plan } : {}),
     },
   })
@@ -264,6 +269,7 @@ export async function updateStudioHourRecord(input: UpdateStudioHourInput) {
     data: {
       ...(input.open !== undefined ? { open: input.open } : {}),
       ...(input.close !== undefined ? { close: input.close } : {}),
+      ...(input.closed !== undefined ? { closed: input.closed } : {}),
     },
   })
   return serializeStudioHour(updated)

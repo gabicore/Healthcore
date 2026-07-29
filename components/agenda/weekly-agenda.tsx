@@ -1,12 +1,13 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   Check,
   ChevronLeft,
   ChevronRight,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   UserX,
@@ -32,6 +33,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -48,10 +50,12 @@ import {
   getStudent,
   getWeekColumns,
   initials,
-  isSlotFull,
   mergeWeekSessions,
   morningSlots,
   renameScheduleSlot,
+  replaceScheduleSlots,
+  replaceStudioHours,
+  sessionParticipantName,
   setAttendanceStatus,
   toIsoDate,
   upsertAttendanceSession,
@@ -59,6 +63,11 @@ import {
   type ClassSession,
   type WeekDayColumn,
 } from '@/lib/data'
+import { fetchStudioHours, fetchTimeSlots } from '@/lib/settings-api'
+import {
+  createStudentSession,
+  updateStudentSession,
+} from '@/lib/sessions-api'
 import { cn } from '@/lib/utils'
 
 const statusActions: {
@@ -100,6 +109,26 @@ export function WeeklyAgenda() {
     time: string
   } | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingSession, setEditingSession] = useState<ClassSession | null>(
+    null,
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([fetchTimeSlots(), fetchStudioHours()])
+      .then(([slots, hours]) => {
+        if (cancelled) return
+        replaceScheduleSlots(slots)
+        replaceStudioHours(hours)
+        setSlotVersion((v) => v + 1)
+      })
+      .catch(() => {
+        /* mantém grade/horários padrão em memória */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const key = weekKey(monday)
   const columns = useMemo(() => getWeekColumns(monday), [monday])
@@ -112,6 +141,11 @@ export function WeeklyAgenda() {
     ]
   }, [slotVersion])
 
+  const slotCapacity = useMemo(() => {
+    void slotVersion
+    return SLOT_CAPACITY
+  }, [slotVersion])
+
   const slotRangeHint = useMemo(() => {
     void slotVersion
     const morning =
@@ -122,7 +156,7 @@ export function WeeklyAgenda() {
       afternoonSlots.length > 0
         ? `${afternoonSlots[0].slice(0, 2)}–${afternoonSlots[afternoonSlots.length - 1].slice(0, 2)}h`
         : '—'
-    return `Manhã ${morning} · Tarde ${afternoon} · clique no horário para editar`
+    return `Manhã ${morning} · Tarde ${afternoon} · até ${SLOT_CAPACITY} vagas/horário`
   }, [slotVersion])
 
   // Sempre recalcula a grade fixa a partir dos alunos (reposições manuais são preservadas).
@@ -185,6 +219,17 @@ export function WeeklyAgenda() {
       [key]: base.map((s) => (s.id === sessionId ? updated : s)),
     }))
 
+    if (
+      current.studentId &&
+      !current.id.startsWith(`${current.studentId}-`)
+    ) {
+      void updateStudentSession(current.studentId, current.id, {
+        status,
+      }).catch(() => {
+        /* agenda local segue; perfil sincroniza ao reabrir */
+      })
+    }
+
     const labels: Record<AttendanceStatus, string> = {
       presente: 'Presença confirmada',
       falta: 'Falta registrada',
@@ -193,12 +238,11 @@ export function WeeklyAgenda() {
       agendada: 'Status atualizado',
     }
     toast.success(labels[status], {
-      description:
-        'A alteração será salva quando o banco de dados for conectado.',
+      description: 'Presença atualizada',
     })
   }
 
-  function handleCreate(session: ClassSession) {
+  function handleSave(session: ClassSession) {
     const sessionMonday = getMonday(
       new Date(
         Number(session.date.slice(0, 4)),
@@ -209,14 +253,32 @@ export function WeeklyAgenda() {
     const targetKey = weekKey(sessionMonday)
 
     setSessionsByWeek((prev) => {
+      const stripped: Record<string, ClassSession[]> = {}
+      for (const [week, list] of Object.entries(prev)) {
+        stripped[week] = list.filter((s) => s.id !== session.id)
+      }
+
       const base = mergeWeekSessions(
         sessionMonday,
-        prev[targetKey] ?? [],
+        stripped[targetKey] ?? [],
         today,
-      )
-      if (isSlotFull(base, session.date, session.time)) {
+      ).filter((s) => s.id !== session.id)
+
+      const occupied = base.filter(
+        (s) =>
+          s.date === session.date &&
+          s.time === session.time &&
+          s.status !== 'cancelada',
+      ).length
+      if (occupied >= slotCapacity) {
         toast.error('Horário lotado', {
-          description: `Este horário já tem ${SLOT_CAPACITY} alunos.`,
+          description: `Este horário já tem ${slotCapacity} alunos.`,
+        })
+        return prev
+      }
+      if (!availableSlotsForWeekday(session.weekday).includes(session.time)) {
+        toast.error('Estúdio fechado', {
+          description: 'Não é possível agendar neste dia ou horário.',
         })
         return prev
       }
@@ -228,15 +290,49 @@ export function WeeklyAgenda() {
           s.status !== 'cancelada',
       )
       if (already) {
-        toast.error('Aluno já está neste horário')
+        toast.error(
+          session.type === 'experimental'
+            ? 'Cliente já está neste horário'
+            : 'Aluno já está neste horário',
+        )
         return prev
       }
-      const saved = upsertAttendanceSession(session)
-      return {
-        ...prev,
-        [targetKey]: [...base, saved].sort((a, b) =>
-          `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
-        ),
+      try {
+        const saved = upsertAttendanceSession(session)
+        if (
+          session.studentId &&
+          (session.type === 'reposicao' ||
+            session.type === 'avulsa' ||
+            session.type === 'experimental')
+        ) {
+          void createStudentSession(session.studentId, {
+            date: session.date,
+            time: session.time,
+            type: session.type,
+            status: session.status,
+            notes: session.notes,
+            professionalId: session.professionalId,
+          }).catch((error) => {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : 'Não foi possível salvar a aula no servidor',
+            )
+          })
+        }
+        return {
+          ...stripped,
+          [targetKey]: [...base, saved].sort((a, b) =>
+            `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
+          ),
+        }
+      } catch (err) {
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : 'Não foi possível agendar neste horário',
+        )
+        return prev
       }
     })
 
@@ -244,7 +340,20 @@ export function WeeklyAgenda() {
       setMonday(sessionMonday)
     }
     setBooking(null)
+    setEditingSession(null)
     setDialogOpen(false)
+  }
+
+  function openEdit(session: ClassSession) {
+    setEditingSession(session)
+    setBooking(null)
+    setDialogOpen(true)
+  }
+
+  function openBook(date: string, time: string) {
+    setEditingSession(null)
+    setBooking({ date, time })
+    setDialogOpen(true)
   }
 
   const weekStats = useMemo(() => {
@@ -267,13 +376,19 @@ export function WeeklyAgenda() {
         <NewClassDialog
           defaultDate={booking?.date ?? todayIso}
           defaultTime={booking?.time}
+          defaultType={editingSession?.type ?? 'reposicao'}
           open={dialogOpen}
           onOpenChange={(open) => {
             setDialogOpen(open)
-            if (!open) setBooking(null)
+            if (!open) {
+              setBooking(null)
+              setEditingSession(null)
+            }
           }}
           sessions={sessions}
-          onCreate={handleCreate}
+          editingSession={editingSession}
+          onCreate={handleSave}
+          hideTrigger={Boolean(editingSession)}
           triggerLabel="Marcar aula"
         />
       </PageHeader>
@@ -375,15 +490,14 @@ export function WeeklyAgenda() {
                     key={block.id}
                     label={block.label}
                     slots={block.slots}
+                    capacity={slotCapacity}
                     columns={columns}
                     sessions={sessions}
                     todayIso={todayIso}
                     onStatusChange={updateStatus}
                     onRenameSlot={handleRenameSlot}
-                    onBook={(date, time) => {
-                      setBooking({ date, time })
-                      setDialogOpen(true)
-                    }}
+                    onBook={openBook}
+                    onEdit={openEdit}
                   />
                 ))}
               </tbody>
@@ -422,6 +536,11 @@ export function WeeklyAgenda() {
                   </div>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
+                  {daySlots.length === 0 ? (
+                    <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+                      Estúdio fechado neste dia
+                    </p>
+                  ) : null}
                   {scheduleBlocks.map((block) => {
                     const slots = block.slots.filter((t) =>
                       daySlots.includes(t),
@@ -437,13 +556,12 @@ export function WeeklyAgenda() {
                             key={time}
                             column={column}
                             time={time}
+                            capacity={slotCapacity}
                             sessions={sessions}
                             onStatusChange={updateStatus}
                             onRenameSlot={handleRenameSlot}
-                            onBook={() => {
-                              setBooking({ date: column.iso, time })
-                              setDialogOpen(true)
-                            }}
+                            onBook={() => openBook(column.iso, time)}
+                            onEdit={openEdit}
                           />
                         ))}
                       </div>
@@ -459,11 +577,9 @@ export function WeeklyAgenda() {
           <CardHeader className="pb-3">
             <CardTitle>Como usar</CardTitle>
             <CardDescription>
-              Clique no horário à esquerda para editar a grade. A agenda fixa
-              vem do cadastro de cada aluno (limitada ao plano). Cada horário
-              tem até {SLOT_CAPACITY} vagas. Use + ou Marcar aula para
-              reposição, avulsa ou experimental. Menu do aluno: presença,
-              falta ou cancelamento.
+              Clique no nome do aluno para abrir o perfil. Use os três pontinhos
+              para marcar presença, falta ou cancelar. Cada horário tem até{' '}
+              {slotCapacity} vagas.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
@@ -480,21 +596,25 @@ export function WeeklyAgenda() {
 function PeriodRows({
   label,
   slots,
+  capacity,
   columns,
   sessions,
   todayIso,
   onStatusChange,
   onRenameSlot,
   onBook,
+  onEdit,
 }: {
   label: string
   slots: readonly string[]
+  capacity: number
   columns: WeekDayColumn[]
   sessions: ClassSession[]
   todayIso: string
   onStatusChange: (id: string, status: AttendanceStatus) => void
   onRenameSlot: (oldTime: string, nextRaw: string) => void
   onBook: (date: string, time: string) => void
+  onEdit: (session: ClassSession) => void
 }) {
   return (
     <>
@@ -528,7 +648,7 @@ function PeriodRows({
               )
               .sort((a, b) => a.studentId.localeCompare(b.studentId))
             const occupied = countActiveInSlot(sessions, column.iso, time)
-            const full = occupied >= SLOT_CAPACITY
+            const full = occupied >= capacity
 
             return (
               <td
@@ -541,7 +661,7 @@ function PeriodRows({
               >
                 {closed ? (
                   <div className="flex h-full min-h-16 items-center justify-center rounded-lg text-[11px] text-muted-foreground">
-                    —
+                    Fechado
                   </div>
                 ) : (
                   <div
@@ -561,7 +681,7 @@ function PeriodRows({
                             : 'text-muted-foreground',
                         )}
                       >
-                        {occupied}/{SLOT_CAPACITY}
+                        {occupied}/{capacity}
                       </span>
                       {!full ? (
                         <button
@@ -580,10 +700,11 @@ function PeriodRows({
                           key={session.id}
                           session={session}
                           onStatusChange={onStatusChange}
+                          onEdit={onEdit}
                         />
                       ))}
                       {Array.from({
-                        length: Math.max(0, SLOT_CAPACITY - occupied),
+                        length: Math.max(0, capacity - occupied),
                       }).map((_, i) => (
                         <button
                           key={`empty-${i}`}
@@ -609,17 +730,21 @@ function PeriodRows({
 function MobileSlot({
   column,
   time,
+  capacity,
   sessions,
   onStatusChange,
   onRenameSlot,
   onBook,
+  onEdit,
 }: {
   column: WeekDayColumn
   time: string
+  capacity: number
   sessions: ClassSession[]
   onStatusChange: (id: string, status: AttendanceStatus) => void
   onRenameSlot: (oldTime: string, nextRaw: string) => void
   onBook: () => void
+  onEdit: (session: ClassSession) => void
 }) {
   const slotSessions = sessions
     .filter(
@@ -630,7 +755,7 @@ function MobileSlot({
     )
     .sort((a, b) => a.studentId.localeCompare(b.studentId))
   const occupied = countActiveInSlot(sessions, column.iso, time)
-  const full = occupied >= SLOT_CAPACITY
+  const full = occupied >= capacity
 
   return (
     <div className="rounded-xl border border-border p-2.5">
@@ -648,7 +773,7 @@ function MobileSlot({
               full && 'border-primary/30 bg-primary/10 text-primary',
             )}
           >
-            {occupied}/{SLOT_CAPACITY}
+            {occupied}/{capacity}
           </Badge>
         </div>
         {!full ? (
@@ -675,6 +800,7 @@ function MobileSlot({
               key={session.id}
               session={session}
               onStatusChange={onStatusChange}
+              onEdit={onEdit}
               expanded
             />
           ))}
@@ -687,18 +813,21 @@ function MobileSlot({
 function StudentChip({
   session,
   onStatusChange,
+  onEdit,
   expanded,
 }: {
   session: ClassSession
   onStatusChange: (id: string, status: AttendanceStatus) => void
+  onEdit: (session: ClassSession) => void
   expanded?: boolean
 }) {
   const student = getStudent(session.studentId)
-  const name = session.guestName?.trim() || student?.name
-  if (!name) return null
+  const displayName =
+    session.guestName?.trim() || student?.name || sessionParticipantName(session)
+  if (!displayName) return null
 
-  const shortName = name.split(' ').slice(0, 2).join(' ')
-  const isGuest = Boolean(session.guestName?.trim()) && !student
+  const shortName = displayName.split(' ').slice(0, 2).join(' ')
+  const isGuest = !student || Boolean(session.guestName?.trim() && !student)
 
   return (
     <div
@@ -714,13 +843,13 @@ function StudentChip({
     >
       <Avatar className={cn('size-5', expanded && 'size-6')}>
         <AvatarFallback className="text-[9px]">
-          {initials(name)}
+          {initials(displayName)}
         </AvatarFallback>
       </Avatar>
       {isGuest ? (
         <span
           className="min-w-0 flex-1 truncate text-xs font-medium"
-          title={name}
+          title={displayName}
         >
           {shortName}
         </span>
@@ -728,7 +857,7 @@ function StudentChip({
         <Link
           href={`/alunos/${student!.id}`}
           className="min-w-0 flex-1 truncate text-xs font-medium hover:underline"
-          title={name}
+          title={displayName}
         >
           {shortName}
         </Link>
@@ -739,7 +868,11 @@ function StudentChip({
         </span>
       ) : null}
       {expanded ? <AttendanceBadge status={session.status} /> : null}
-      <SessionMenu session={session} onStatusChange={onStatusChange} />
+      <SessionMenu
+        session={session}
+        onStatusChange={onStatusChange}
+        onEdit={onEdit}
+      />
     </div>
   )
 }
@@ -747,37 +880,55 @@ function StudentChip({
 function SessionMenu({
   session,
   onStatusChange,
+  onEdit,
 }: {
   session: ClassSession
   onStatusChange: (id: string, status: AttendanceStatus) => void
+  onEdit?: (session: ClassSession) => void
 }) {
+  const actions =
+    session.type === 'experimental'
+      ? statusActions.filter((action) => action.status !== 'reposicao')
+      : statusActions.filter((action) =>
+          ['presente', 'falta', 'cancelada', 'agendada'].includes(
+            action.status,
+          ),
+        )
+  const canEdit = session.type !== 'fixa'
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="size-5 shrink-0 text-muted-foreground"
-            aria-label="Ações da aula"
-          >
-            <MoreHorizontal className="size-3.5" />
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="end" className="w-52">
-        <DropdownMenuLabel>Atualizar status</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {statusActions.map((action) => (
-          <DropdownMenuItem
-            key={action.status}
-            disabled={session.status === action.status}
-            onClick={() => onStatusChange(session.id, action.status)}
-          >
-            <action.icon />
-            {action.label}
-          </DropdownMenuItem>
-        ))}
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label="Ações de frequência"
+      >
+        <MoreHorizontal className="size-3.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-52">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Frequência / presença</DropdownMenuLabel>
+          {actions.map((action) => (
+            <DropdownMenuItem
+              key={action.status}
+              disabled={session.status === action.status}
+              onClick={() => onStatusChange(session.id, action.status)}
+            >
+              <action.icon />
+              {action.label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
+        {canEdit && onEdit ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem onClick={() => onEdit(session)}>
+                <Pencil />
+                Editar aula
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   )

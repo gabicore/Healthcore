@@ -10,6 +10,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { PageHeader } from '@/components/page-header'
 import { AttendanceChart } from '@/components/dashboard/dashboard-charts'
@@ -104,8 +105,16 @@ export default function DashboardPage() {
     : 'Domingo · sem aulas'
 
   function handleCreateExperimental(session: ClassSession) {
-    upsertAttendanceSession(session)
-    setAgendaTick((n) => n + 1)
+    try {
+      upsertAttendanceSession(session)
+      setAgendaTick((n) => n + 1)
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível agendar neste horário',
+      )
+    }
   }
 
   return (

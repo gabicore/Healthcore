@@ -32,9 +32,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
       if (
         error instanceof Error &&
         (error.message === 'Aluno não encontrado' ||
-          error.message === 'Plano não encontrado')
+          error.message === 'Plano não encontrado' ||
+          error.message.includes('Já existe um contrato ativo'))
       ) {
-        return jsonError(error.message, 404)
+        return jsonError(
+          error.message,
+          error.message === 'Aluno não encontrado' ||
+            error.message === 'Plano não encontrado'
+            ? 404
+            : 400,
+        )
       }
       throw error
     }

@@ -52,6 +52,8 @@ async function main() {
       owner: studio.owner,
       email: studio.email,
       phone: studio.phone,
+      cnpj: studio.cnpj,
+      address: studio.address,
       plan: studio.plan,
     },
   })
@@ -90,6 +92,7 @@ async function main() {
         weekday: toDbWeekday(hour.weekday),
         open: hour.open,
         close: hour.close,
+        closed: hour.closed,
       },
     })
   }

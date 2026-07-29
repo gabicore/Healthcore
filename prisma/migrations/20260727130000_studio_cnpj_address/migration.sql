@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE `Studio` ADD COLUMN `cnpj` VARCHAR(191) NOT NULL DEFAULT '';
+ALTER TABLE `Studio` ADD COLUMN `address` TEXT NOT NULL;

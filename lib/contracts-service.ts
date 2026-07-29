@@ -6,12 +6,14 @@ import type {
 } from '@/lib/data'
 import {
   contractEndDateForPeriod,
+  contractTotalClasses,
   defaultContractClauses,
 } from '@/lib/data'
 import { DEFAULT_STUDIO_ID } from '@/lib/constants'
 import {
   decimalToNumber,
   fromDbPaymentMethod,
+  fromDbWeekday,
   parseIsoDate,
   toDbPaymentMethod,
   toIsoDateOnly,
@@ -44,6 +46,76 @@ function asHistory(value: Prisma.JsonValue): ContractHistoryEntry[] {
       return { at: e.at, action: e.action, by: e.by }
     })
     .filter((e): e is ContractHistoryEntry => e !== null)
+}
+
+/**
+ * Alinha cadastro do aluno (plano, cobrança e agenda fixa) ao contrato assinado (ativo).
+ */
+export async function syncStudentWithActiveContract(contract: DbContract) {
+  if (contract.status !== 'ativo') return
+
+  const plan = await prisma.plan.findUnique({ where: { id: contract.planId } })
+  if (!plan) return
+
+  const student = await prisma.student.findUnique({
+    where: { id: contract.studentId },
+    include: { schedule: true },
+  })
+  if (!student) return
+
+  const overflow = [...student.schedule]
+    .sort((a, b) =>
+      `${a.weekday}${a.time}`.localeCompare(`${b.weekday}${b.time}`),
+    )
+    .slice(plan.frequency)
+
+  await prisma.$transaction(async (tx) => {
+    await tx.student.update({
+      where: { id: contract.studentId },
+      data: {
+        planId: contract.planId,
+        monthlyValue: decimalToNumber(contract.monthlyValue),
+        discountPercent: contract.discountPercent,
+        dueDay: contract.dueDay,
+        paymentMethod: contract.paymentMethod,
+      },
+    })
+    if (overflow.length > 0) {
+      await tx.scheduleSlot.deleteMany({
+        where: {
+          studentId: contract.studentId,
+          id: { in: overflow.map((s) => s.id) },
+        },
+      })
+    }
+  })
+}
+
+/** Contrato assinado que governa plano/financeiro/agenda. Rascunhos são ignorados. */
+export async function findGoverningContract(studentId: string) {
+  return prisma.contract.findFirst({
+    where: { studentId, status: 'ativo' },
+    orderBy: { startDate: 'desc' },
+  })
+}
+
+/** Garante que o aluno reflita o contrato ativo (assinado), se houver. */
+export async function syncStudentFromActiveContract(studentId: string) {
+  const active = await findGoverningContract(studentId)
+  if (!active) return null
+  await syncStudentWithActiveContract(active)
+  return active
+}
+
+async function endOtherActiveContracts(studentId: string, keepId: string) {
+  await prisma.contract.updateMany({
+    where: {
+      studentId,
+      status: 'ativo',
+      id: { not: keepId },
+    },
+    data: { status: 'encerrado' },
+  })
 }
 
 function asVersions(value: Prisma.JsonValue): ContractVersion[] {
@@ -141,6 +213,16 @@ export async function createContractRecord(
   const student = await prisma.student.findUnique({ where: { id: studentId } })
   if (!student) throw new Error('Aluno não encontrado')
 
+  const activeContract = await prisma.contract.findFirst({
+    where: { studentId, status: 'ativo' },
+    select: { number: true },
+  })
+  if (activeContract) {
+    throw new Error(
+      `Já existe um contrato ativo para este aluno (${activeContract.number}). Encerre ou rescinda o atual antes de criar outro.`,
+    )
+  }
+
   const plan = await prisma.plan.findUnique({ where: { id: input.planId } })
   if (!plan) throw new Error('Plano não encontrado')
 
@@ -189,6 +271,10 @@ export async function createContractRecord(
       ] as Prisma.InputJsonValue,
     },
   })
+  if (created.status === 'ativo') {
+    await endOtherActiveContracts(studentId, created.id)
+    await syncStudentWithActiveContract(created)
+  }
   return serializeContract(created)
 }
 
@@ -260,6 +346,19 @@ export async function updateContractRecord(
       history: history as Prisma.InputJsonValue,
     },
   })
+
+  const statusBecameActive =
+    updated.status === 'ativo' && existing.status !== 'ativo'
+
+  if (statusBecameActive) {
+    await endOtherActiveContracts(updated.studentId, updated.id)
+  }
+
+  // Só contrato assinado (ativo) espelha financeiro e agenda.
+  if (updated.status === 'ativo') {
+    await syncStudentWithActiveContract(updated)
+  }
+
   return serializeContract(updated)
 }
 
@@ -380,6 +479,22 @@ export async function emailContractRecord(id: string) {
           (contract.monthlyValue / (1 - contract.discountPercent / 100)) * 100,
         ) / 100
       : contract.monthlyValue
+  const scheduleRows = await prisma.scheduleSlot.findMany({
+    where: { studentId: contract.studentId },
+    orderBy: [{ weekday: 'asc' }, { time: 'asc' }],
+  })
+  const totalClasses = plan
+    ? contractTotalClasses({
+        startDate: contract.startDate,
+        endDate: contract.endDate,
+        frequency: plan.frequency,
+        schedule: scheduleRows.map((s) => ({
+          weekday: fromDbWeekday(s.weekday),
+          time: s.time,
+        })),
+        planId: plan.id,
+      })
+    : 0
 
   const { emailSender } = await import('@/lib/auth/email/console-sender')
   const studio = await prisma.studio.findUnique({
@@ -390,7 +505,17 @@ export async function emailContractRecord(id: string) {
     `Olá ${student.name},`,
     '',
     `Segue o resumo do contrato ${contract.number}:`,
+    '',
+    'Contratado (estúdio):',
+    `Nome: ${studio?.name ?? '—'}`,
+    `Responsável: ${studio?.owner ?? '—'}`,
+    `CNPJ: ${studio?.cnpj || '—'}`,
+    `Telefone: ${studio?.phone ?? '—'}`,
+    `E-mail: ${studio?.email ?? '—'}`,
+    `Endereço: ${studio?.address || '—'}`,
+    '',
     `Plano: ${contract.planLabel}`,
+    `Aulas do contrato: ${totalClasses > 0 ? `${totalClasses} aulas` : '—'}`,
     `Valor do plano: R$ ${planPrice.toFixed(2)}`,
     `Desconto: ${
       contract.discountPercent > 0
@@ -400,7 +525,9 @@ export async function emailContractRecord(id: string) {
         : 'Sem desconto'
     }`,
     `Valor final: R$ ${contract.monthlyValue.toFixed(2)}`,
-    `Vigência: ${contract.startDate} a ${contract.endDate}`,
+    `Vigência: ${contract.startDate} a ${contract.endDate}${
+      totalClasses > 0 ? ` · ${totalClasses} aulas` : ''
+    }`,
     `Status: ${contract.status}`,
     `Responsável financeiro: ${contract.financialResponsible}`,
     '',

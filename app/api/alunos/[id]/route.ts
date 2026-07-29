@@ -33,11 +33,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       if (!updated) return jsonError('Aluno não encontrado', 404)
       return jsonOk(updated)
     } catch (error) {
+      if (error instanceof Error && error.message === 'Plano não encontrado') {
+        return jsonError(error.message, 404)
+      }
       if (
         error instanceof Error &&
-        error.message === 'Plano não encontrado'
+        error.message.includes('contrato ativo')
       ) {
-        return jsonError(error.message, 404)
+        return jsonError(error.message, 400)
       }
       throw error
     }

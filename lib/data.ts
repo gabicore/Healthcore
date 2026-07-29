@@ -8,6 +8,8 @@ export type StudioProfile = {
   owner: string
   email: string
   phone: string
+  cnpj: string
+  address: string
   plan: 'Essencial' | 'Profissional' | 'Studio'
 }
 
@@ -53,6 +55,7 @@ export type StudioHour = {
   weekday: Weekday
   open: string
   close: string
+  closed: boolean
 }
 
 export type PhysicalAssessment = {
@@ -261,6 +264,8 @@ export const studio: StudioProfile = {
   owner: 'Cristina Tenório',
   email: 'contato@studioequilibrio.com.br',
   phone: '(11) 96869-2393',
+  cnpj: '12.345.678/0001-90',
+  address: 'Rua das Flores, 120 — Pinheiros, São Paulo/SP',
   plan: 'Profissional',
 }
 
@@ -467,13 +472,47 @@ export const professionals: Professional[] = [
 ]
 
 export const studioHours: StudioHour[] = [
-  { weekday: 'Segunda', open: '07:00', close: '19:00' },
-  { weekday: 'Terça', open: '07:00', close: '19:00' },
-  { weekday: 'Quarta', open: '07:00', close: '19:00' },
-  { weekday: 'Quinta', open: '07:00', close: '19:00' },
-  { weekday: 'Sexta', open: '07:00', close: '19:00' },
-  { weekday: 'Sábado', open: '07:00', close: '11:00' },
+  { weekday: 'Segunda', open: '07:00', close: '19:00', closed: false },
+  { weekday: 'Terça', open: '07:00', close: '19:00', closed: false },
+  { weekday: 'Quarta', open: '07:00', close: '19:00', closed: false },
+  { weekday: 'Quinta', open: '07:00', close: '19:00', closed: false },
+  { weekday: 'Sexta', open: '07:00', close: '19:00', closed: false },
+  { weekday: 'Sábado', open: '07:00', close: '11:00', closed: false },
 ]
+
+/** Substitui os horários de funcionamento em memória (Configurações). */
+export function replaceStudioHours(hours: StudioHour[]) {
+  studioHours.splice(
+    0,
+    studioHours.length,
+    ...hours.map((h) => ({
+      weekday: h.weekday,
+      open: h.open,
+      close: h.close,
+      closed: Boolean(h.closed),
+    })),
+  )
+}
+
+export function getStudioHour(weekday: Weekday): StudioHour | undefined {
+  return studioHours.find((h) => h.weekday === weekday)
+}
+
+/**
+ * Slot permitido se o dia não estiver fechado e o horário estiver em [open, close).
+ * Ex.: close 19:00 permite 18:00, não 19:00.
+ */
+export function slotFitsStudioHour(
+  hour: Pick<StudioHour, 'open' | 'close' | 'closed'> | null | undefined,
+  time: string,
+): boolean {
+  if (!hour || hour.closed) return false
+  return time >= hour.open && time < hour.close
+}
+
+export function isWithinStudioHours(weekday: Weekday, time: string): boolean {
+  return slotFitsStudioHour(getStudioHour(weekday), time)
+}
 
 export const weekdays: Weekday[] = [
   'Segunda',
@@ -494,6 +533,25 @@ export function setSlotCapacity(value: number) {
 export const morningSlots: string[] = ['07:00', '08:00', '09:00', '10:00']
 export const afternoonSlots: string[] = ['15:00', '16:00', '17:00', '18:00']
 
+/** Substitui a grade em memória pelos horários persistidos (Configurações). */
+export function replaceScheduleSlots(
+  slots: { time: string; period: 'manha' | 'tarde'; capacity?: number }[],
+) {
+  const morning = slots
+    .filter((s) => s.period === 'manha')
+    .map((s) => s.time)
+    .sort()
+  const afternoon = slots
+    .filter((s) => s.period === 'tarde')
+    .map((s) => s.time)
+    .sort()
+  morningSlots.splice(0, morningSlots.length, ...morning)
+  afternoonSlots.splice(0, afternoonSlots.length, ...afternoon)
+
+  const capacity = slots.find((s) => typeof s.capacity === 'number')?.capacity
+  if (capacity != null) setSlotCapacity(capacity)
+}
+
 export function getTimeSlots(): string[] {
   return [...morningSlots, ...afternoonSlots]
 }
@@ -510,10 +568,11 @@ export function getTimePeriod(time: string): TimePeriod | null {
   return null
 }
 
-/** Sábado opera só no período da manhã. */
+/** Horários da grade disponíveis no dia, respeitando funcionamento do estúdio. */
 export function availableSlotsForWeekday(weekday: Weekday): string[] {
-  if (weekday === 'Sábado') return [...morningSlots]
-  return getTimeSlots()
+  const hour = getStudioHour(weekday)
+  if (!hour || hour.closed) return []
+  return getTimeSlots().filter((time) => slotFitsStudioHour(hour, time))
 }
 
 function normalizeTimeInput(raw: string): string | null {
@@ -2009,10 +2068,13 @@ export function patchStudio(patch: Partial<StudioProfile>) {
 
 export function patchStudioHour(
   weekday: Weekday,
-  patch: Partial<Pick<StudioHour, 'open' | 'close'>>,
+  patch: Partial<Pick<StudioHour, 'open' | 'close' | 'closed'>>,
 ) {
   const hour = studioHours.find((h) => h.weekday === weekday)
   if (!hour) return null
+  if (patch.closed !== undefined) {
+    hour.closed = patch.closed
+  }
   if (patch.open !== undefined) {
     const open = normalizeTimeInput(patch.open)
     if (!open) return null
@@ -2189,11 +2251,73 @@ export function planTotalClassesFromPlan(plan: Pick<Plan, 'period' | 'frequency'
   return planPeriodWeeks(plan.period) * plan.frequency
 }
 
+/**
+ * Semanas do calendário que intersectam o intervalo [fromDate, toDate]
+ * (mesma grade usada na geração do histórico).
+ */
+export function countWeeksOverlappingRange(
+  fromDate: string,
+  toDate: string,
+): number {
+  const from = parseIsoDate(fromDate)
+  const to = parseIsoDate(toDate)
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
+    return 0
+  }
+  let cursor = getMonday(from)
+  const lastMonday = getMonday(to)
+  let weeks = 0
+  while (cursor <= lastMonday) {
+    const columns = getWeekColumns(cursor)
+    if (columns.some((c) => c.iso >= fromDate && c.iso <= toDate)) {
+      weeks += 1
+    }
+    cursor = addDays(cursor, 7)
+  }
+  return weeks
+}
+
+/**
+ * Quantidade real de aulas fixas na vigência do contrato.
+ * Usa a mesma geração do histórico (agenda × datas).
+ * Sem agenda: estima semanas reais × frequência.
+ */
+export function contractTotalClasses(input: {
+  startDate: string
+  endDate: string
+  frequency: number
+  schedule?: ScheduleSlot[]
+  planId?: string
+}): number {
+  const frequency = Math.max(0, input.frequency)
+  if (!input.startDate || !input.endDate || input.startDate > input.endDate) {
+    return 0
+  }
+
+  const schedule = input.schedule ?? []
+  const limited = scheduleWithinPlanLimit(schedule, frequency)
+
+  if (limited.length > 0) {
+    return buildFixedSessionsForSchedule({
+      studentId: '_contract-count',
+      schedule: limited,
+      weeklyLimit: frequency,
+      fromDate: input.startDate,
+      toDate: input.endDate,
+    }).length
+  }
+
+  return countWeeksOverlappingRange(input.startDate, input.endDate) * frequency
+}
+
 export function scheduleWithinPlanLimit(
   schedule: ScheduleSlot[],
-  planId: string,
+  planIdOrFrequency: string | number,
 ) {
-  const limit = planWeeklyLimit(planId)
+  const limit =
+    typeof planIdOrFrequency === 'number'
+      ? Math.max(0, planIdOrFrequency)
+      : planWeeklyLimit(planIdOrFrequency)
   if (schedule.length <= limit) return schedule
   return schedule.slice(0, limit)
 }
@@ -2216,7 +2340,11 @@ export function patchStudent(id: string, patch: Partial<Student>) {
   }
 
   const planId = next.planId
-  next.schedule = scheduleWithinPlanLimit(next.schedule, planId)
+  // Só corta a agenda quando o plano do cadastro muda — a agenda segue o
+  // contrato ativo (sincronizado em syncStudentWithActiveContract).
+  if (patch.planId !== undefined) {
+    next.schedule = scheduleWithinPlanLimit(next.schedule, planId)
+  }
 
   if (patch.discountPercent !== undefined) {
     next.discountPercent = Math.min(
@@ -2234,6 +2362,25 @@ export function patchStudent(id: string, patch: Partial<Student>) {
 
   students[index] = next
   return next
+}
+
+/** Garante que o aluno da API exista no store em memória (agenda/frequência). */
+export function upsertStudentInStore(student: Student) {
+  const index = students.findIndex((s) => s.id === student.id)
+  const clone: Student = {
+    ...student,
+    schedule: student.schedule.map((s) => ({ ...s })),
+    payments: student.payments.map((p) => ({ ...p })),
+    assessments: student.assessments.map((a) => ({ ...a })),
+    evolutions: student.evolutions.map((e) => ({ ...e })),
+    photos: student.photos.map((p) => ({ ...p })),
+  }
+  if (index < 0) {
+    students.push(clone)
+    return clone
+  }
+  students[index] = { ...students[index], ...clone }
+  return students[index]
 }
 
 export function formatCurrency(value: number) {
@@ -2756,16 +2903,10 @@ function demoStatusForSession(
   todayIso: string,
 ): AttendanceStatus {
   if (iso > todayIso) return 'agendada'
-  // Status determinístico para o MVP navegável (sem banco).
-  const seed = (studentId + iso).split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
-  if (iso < todayIso) {
-    const roll = seed % 10
-    if (roll < 7) return 'presente'
-    if (roll < 9) return 'falta'
-    return 'cancelada'
-  }
-  // Hoje: metade já confirmada
-  return seed % 2 === 0 ? 'presente' : 'agendada'
+  // Passado: presença padrão. Falta/cancelamento só contam após edição explícita
+  // (crédito de reposição não pode vir de status demonstrativo).
+  void studentId
+  return 'presente'
 }
 
 /** Gera as aulas da semana a partir da grade fixa dos alunos ativos. */
@@ -2995,8 +3136,17 @@ export function upsertAttendanceSession(session: ClassSession) {
         s.date === session.date &&
         s.time === session.time,
     )
-    if (bySlot >= 0) attendanceLedger[bySlot] = session
-    else attendanceLedger.push(session)
+    if (bySlot >= 0) {
+      attendanceLedger[bySlot] = session
+    } else {
+      if (
+        session.status !== 'cancelada' &&
+        !isWithinStudioHours(session.weekday, session.time)
+      ) {
+        throw new Error('Estúdio fechado neste dia ou horário')
+      }
+      attendanceLedger.push(session)
+    }
   }
   return session
 }
@@ -3008,45 +3158,204 @@ export function setAttendanceStatus(
   return upsertAttendanceSession({ ...session, status })
 }
 
+export function removeAttendanceSession(id: string) {
+  const index = attendanceLedger.findIndex((s) => s.id === id)
+  if (index < 0) return false
+  attendanceLedger.splice(index, 1)
+  return true
+}
+
+/** Experimentais da semana (ledger + lista da grade). */
+export function getWeekExperimentalSessions(
+  monday: Date,
+  existing: ClassSession[] = [],
+  today = new Date(),
+) {
+  return mergeWeekSessions(monday, existing, today).filter(
+    (s) => s.type === 'experimental',
+  )
+}
+
 export function getStudentAttendanceHistory(
   studentId: string,
-  weeksBack = 8,
-  today = new Date(),
+  weeksBackOrOptions: number | StudentAttendanceHistoryOptions = 8,
+  todayArg = new Date(),
 ): ClassSession[] {
-  const monday = getMonday(today)
-  const generated: ClassSession[] = []
+  const options: StudentAttendanceHistoryOptions =
+    typeof weeksBackOrOptions === 'number'
+      ? { weeksBack: weeksBackOrOptions }
+      : weeksBackOrOptions
+  const today = options.today ?? todayArg
+  const todayIso = toIsoDate(today)
 
-  for (let w = 0; w < weeksBack; w++) {
-    const weekMonday = addDays(monday, -7 * w)
-    generated.push(
-      ...buildWeekSessions(weekMonday, today).filter(
-        (s) => s.studentId === studentId,
-      ),
-    )
+  const mockStudent = getStudent(studentId)
+  // Agenda explícita vazia = não gerar histórico a partir do mock.
+  const schedule =
+    options.schedule !== undefined
+      ? options.schedule
+      : (mockStudent?.schedule ?? [])
+  const planId = options.planId ?? mockStudent?.planId
+  const weeklyLimit = options.weeklyLimit
+
+  let fromIso = options.fromDate
+  let toIso = options.toDate
+
+  if (!fromIso || !toIso) {
+    const weeksBack = options.weeksBack ?? 8
+    const monday = getMonday(today)
+    const oldest = addDays(monday, -7 * (weeksBack - 1))
+    fromIso = fromIso ?? toIsoDate(oldest)
+    toIso = toIso ?? todayIso
   }
+
+  // Não gera aulas antes do início nem depois do fim do período informado.
+  if (fromIso > toIso) {
+    return []
+  }
+
+  // Sem agenda completa (todos os horários do plano) não gera histórico.
+  if (schedule.length === 0) {
+    return []
+  }
+  if (weeklyLimit != null && schedule.length < weeklyLimit) {
+    return []
+  }
+
+  const generated = buildFixedSessionsForSchedule({
+    studentId,
+    schedule,
+    planId,
+    weeklyLimit,
+    fromDate: fromIso,
+    toDate: toIso,
+    today,
+  })
 
   const byKey = new Map<string, ClassSession>(
     generated.map((s) => [`${s.studentId}|${s.date}|${s.time}`, s]),
   )
 
+  // Extras do banco primeiro; o ledger local sobrescreve (ações de presença).
+  for (const record of options.extraSessions ?? []) {
+    if (record.studentId !== studentId) continue
+    // Histórico do contrato atual: ignora aulas/reposições fora da vigência.
+    if (record.date < fromIso || record.date > toIso) continue
+    if (record.type === 'fixa') {
+      const key = `${record.studentId}|${record.date}|${record.time}`
+      if (byKey.has(key)) {
+        const base = byKey.get(key)!
+        byKey.set(key, {
+          ...base,
+          id: record.id,
+          status: record.status,
+          notes: record.notes,
+          professionalId: record.professionalId,
+        })
+      } else {
+        byKey.set(key, record)
+      }
+      continue
+    }
+    // Reposição/avulsa nunca substitui aula fixa — chave própria.
+    const key = `${record.studentId}|${record.type}|${record.id}|${record.date}|${record.time}`
+    byKey.set(key, record)
+  }
+
   for (const record of attendanceLedger) {
     if (record.studentId !== studentId) continue
-    const key = `${record.studentId}|${record.date}|${record.time}`
-    if (record.type === 'fixa' && byKey.has(key)) {
-      const base = byKey.get(key)!
-      byKey.set(key, {
-        ...base,
-        status: record.status,
-        notes: record.notes,
-        professionalId: record.professionalId,
-      })
-    } else if (record.type !== 'fixa') {
-      byKey.set(key, record)
+    if (record.date < fromIso || record.date > toIso) continue
+    if (record.type === 'fixa') {
+      const key = `${record.studentId}|${record.date}|${record.time}`
+      if (byKey.has(key)) {
+        const base = byKey.get(key)!
+        byKey.set(key, {
+          ...base,
+          status: record.status,
+          notes: record.notes,
+          professionalId: record.professionalId,
+        })
+      } else {
+        byKey.set(key, record)
+      }
+      continue
     }
+    const key = `${record.studentId}|${record.type}|${record.id}|${record.date}|${record.time}`
+    byKey.set(key, record)
   }
 
   return [...byKey.values()].sort((a, b) =>
     `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`),
+  )
+}
+
+export type StudentAttendanceHistoryOptions = {
+  weeksBack?: number
+  schedule?: ScheduleSlot[]
+  planId?: string
+  /** Limite semanal explícito (evita depender do store mock de planos). */
+  weeklyLimit?: number
+  /** Início do histórico (ex.: data de início do contrato). */
+  fromDate?: string
+  /** Fim do histórico para aulas fixas (ex.: fim do contrato ou hoje). */
+  toDate?: string
+  /** Sessões extras (ex.: reposições persistidas no banco). */
+  extraSessions?: ClassSession[]
+  today?: Date
+}
+
+/** Gera aulas fixas de um aluno entre duas datas, a partir da agenda semanal. */
+export function buildFixedSessionsForSchedule(input: {
+  studentId: string
+  schedule: ScheduleSlot[]
+  planId?: string
+  /** Preferir ao planId quando a frequência real do contrato/plano for conhecida. */
+  weeklyLimit?: number
+  fromDate: string
+  toDate: string
+  today?: Date
+}): ClassSession[] {
+  const today = input.today ?? new Date()
+  const todayIso = toIsoDate(today)
+  const from = parseIsoDate(input.fromDate)
+  const to = parseIsoDate(input.toDate)
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
+    return []
+  }
+
+  const limited =
+    input.weeklyLimit != null
+      ? scheduleWithinPlanLimit(input.schedule, input.weeklyLimit)
+      : input.planId
+        ? scheduleWithinPlanLimit(input.schedule, input.planId)
+        : input.schedule
+
+  const sessions: ClassSession[] = []
+  let cursor = getMonday(from)
+  const lastMonday = getMonday(to)
+
+  while (cursor <= lastMonday) {
+    const columns = getWeekColumns(cursor)
+    for (const slot of limited) {
+      const column = columns.find((c) => c.weekday === slot.weekday)
+      if (!column) continue
+      if (column.iso < input.fromDate || column.iso > input.toDate) continue
+      const allowed = availableSlotsForWeekday(slot.weekday)
+      if (!allowed.includes(slot.time)) continue
+      sessions.push({
+        id: `${input.studentId}-${column.iso}-${slot.time}`,
+        studentId: input.studentId,
+        date: column.iso,
+        weekday: slot.weekday,
+        time: slot.time,
+        status: demoStatusForSession(input.studentId, column.iso, todayIso),
+        type: 'fixa',
+      })
+    }
+    cursor = addDays(cursor, 7)
+  }
+
+  return sessions.sort((a, b) =>
+    `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
   )
 }
 
@@ -3055,11 +3364,10 @@ export function getAttendanceStats(sessions: ClassSession[], today = new Date())
   const past = sessions.filter(
     (s) => s.date <= todayIso && s.status !== 'cancelada',
   )
+  // Só presença confirmada conta — inclusive em aulas de reposição.
   const presentes = past.filter((s) => s.status === 'presente').length
   const faltas = past.filter((s) => s.status === 'falta').length
-  const reposicoes = sessions.filter(
-    (s) => s.type === 'reposicao' || s.status === 'reposicao',
-  ).length
+  const reposicoes = sessions.filter((s) => s.type === 'reposicao').length
   const agendadas = sessions.filter((s) => s.status === 'agendada').length
   const total = past.length
   const rate = total === 0 ? 0 : Math.round((presentes / total) * 100)
@@ -3071,6 +3379,49 @@ export function getAttendanceStats(sessions: ClassSession[], today = new Date())
     reposicoes,
     agendadas,
     rate,
+  }
+}
+
+/**
+ * Reposições permitidas = aulas fixas com falta/cancelamento − reposições ativas.
+ * Opcionalmente limitado à vigência do contrato atual.
+ */
+export function getMakeupAllowance(
+  sessions: ClassSession[],
+  range?: { fromDate?: string; toDate?: string | null },
+) {
+  const inContract = (s: ClassSession) => {
+    if (range?.fromDate && s.date < range.fromDate) return false
+    if (range?.toDate && s.date > range.toDate) return false
+    return true
+  }
+  const scoped = sessions.filter(inContract)
+  const missedSessions = scoped
+    .filter(
+      (s) =>
+        s.type === 'fixa' &&
+        (s.status === 'falta' || s.status === 'cancelada'),
+    )
+    .slice()
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+  const usedSessions = scoped
+    .filter((s) => s.type === 'reposicao' && s.status !== 'cancelada')
+    .slice()
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+  const missed = missedSessions.length
+  const used = usedSessions.length
+  const remaining = Math.max(0, missed - used)
+  // FIFO: as primeiras faltas/cancelamentos são cobertas pelas reposições.
+  const pendingMissed = missedSessions.slice(used)
+  const coveredMissed = missedSessions.slice(0, used)
+
+  return {
+    missed,
+    used,
+    remaining,
+    pendingMissed,
+    coveredMissed,
+    makeups: usedSessions,
   }
 }
 
@@ -3091,7 +3442,7 @@ export function createMakeupSession(input: {
     date: input.date,
     weekday,
     time: input.time,
-    status: 'reposicao',
+    status: 'agendada',
     type: 'reposicao',
     notes: input.notes,
     professionalId: input.professionalId,

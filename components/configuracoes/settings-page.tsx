@@ -16,6 +16,16 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Field, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -35,6 +45,8 @@ import {
   type StudioHour,
   type StudioProfile,
   type Weekday,
+  replaceScheduleSlots,
+  replaceStudioHours,
 } from '@/lib/data'
 import type { TimeSlotDto } from '@/lib/validations/settings'
 import {
@@ -72,25 +84,20 @@ function errorMessage(err: unknown, fallback: string) {
   return err instanceof Error ? err.message : fallback
 }
 
-function suggestSlotTime(
-  period: 'manha' | 'tarde',
-  slots: TimeSlotDto[],
-): string {
-  const used = new Set(slots.map((s) => s.time))
-  const count = slots.filter((s) => s.period === period).length
-  let candidate =
-    period === 'manha'
-      ? `${String(7 + count).padStart(2, '0')}:00`
-      : `${15 + count}:00`
+function periodForTime(time: string): 'manha' | 'tarde' {
+  const hour = Number(time.slice(0, 2))
+  return Number.isFinite(hour) && hour < 13 ? 'manha' : 'tarde'
+}
 
-  let guard = 0
-  while (used.has(candidate) && guard < 24) {
-    const [h, m] = candidate.split(':').map(Number)
-    const next = h * 60 + m + 60
-    candidate = `${String(Math.floor(next / 60) % 24).padStart(2, '0')}:${String(next % 60).padStart(2, '0')}`
-    guard += 1
-  }
-  return candidate
+function normalizeTimeInput(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (TIME_RE.test(trimmed)) return trimmed
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})$/)
+  if (!match) return null
+  const h = Number(match[1])
+  const m = Number(match[2])
+  if (h > 23 || m > 59) return null
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
 export function SettingsPage() {
@@ -99,6 +106,8 @@ export function SettingsPage() {
   const [team, setTeam] = useState<Professional[]>([])
   const [plans, setPlans] = useState<Plan[]>([])
   const [timeSlots, setTimeSlots] = useState<TimeSlotDto[]>([])
+  const [newSlotTime, setNewSlotTime] = useState('')
+  const [addingSlot, setAddingSlot] = useState(false)
 
   const planList = useMemo(
     () =>
@@ -144,9 +153,11 @@ export function SettingsPage() {
         if (cancelled) return
         setStudioData(studio)
         setHours(studioHours)
+        replaceStudioHours(studioHours)
         setTeam(professionals)
         setPlans(planRows)
         setTimeSlots(slots)
+        replaceScheduleSlots(slots)
       } catch (err: unknown) {
         if (!cancelled) {
           toast.error(
@@ -165,7 +176,9 @@ export function SettingsPage() {
   }
 
   async function reloadTimeSlots() {
-    setTimeSlots(await fetchTimeSlots())
+    const slots = await fetchTimeSlots()
+    setTimeSlots(slots)
+    replaceScheduleSlots(slots)
   }
 
   async function reloadPlans() {
@@ -177,7 +190,9 @@ export function SettingsPage() {
   }
 
   async function reloadHours() {
-    setHours(await fetchStudioHours())
+    const next = await fetchStudioHours()
+    setHours(next)
+    replaceStudioHours(next)
   }
 
   if (!studioData) {
@@ -261,6 +276,32 @@ export function SettingsPage() {
                   }
                 }}
               />
+              <InlineField
+                label="CNPJ"
+                value={studioData.cnpj}
+                placeholder="00.000.000/0000-00"
+                onSave={async (cnpj) => {
+                  try {
+                    setStudioData(await updateStudio({ cnpj }))
+                    notify('CNPJ')
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível salvar'))
+                  }
+                }}
+              />
+              <InlineField
+                label="Endereço"
+                value={studioData.address}
+                className="sm:col-span-2 lg:col-span-3"
+                onSave={async (address) => {
+                  try {
+                    setStudioData(await updateStudio({ address }))
+                    notify('Endereço')
+                  } catch (err) {
+                    toast.error(errorMessage(err, 'Não foi possível salvar'))
+                  }
+                }}
+              />
               <div className="flex flex-col gap-0.5 py-2">
                 <dt className="text-xs text-muted-foreground">Plano HealthCore</dt>
                 <dd className="pt-1">
@@ -275,7 +316,8 @@ export function SettingsPage() {
           <CardHeader>
             <CardTitle>Horários de funcionamento</CardTitle>
             <CardDescription>
-              Abertura e fechamento por dia · sábado só manhã na grade
+              Abertura e fechamento por dia · marque Fechado quando não houver
+              atendimento
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">
@@ -283,6 +325,7 @@ export function SettingsPage() {
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead>Dia</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Abre</TableHead>
                   <TableHead>Fecha</TableHead>
                 </TableRow>
@@ -295,52 +338,93 @@ export function SettingsPage() {
                     <TableRow key={weekday}>
                       <TableCell className="font-medium">{weekday}</TableCell>
                       <TableCell>
-                        <InlineCell
-                          value={hour.open}
-                          className="font-mono tabular-nums"
-                          onSave={async (open) => {
-                            if (!TIME_RE.test(open.trim())) {
-                              toast.error('Horário inválido (use HH:MM)')
-                              return
-                            }
-                            try {
-                              await updateStudioHour({
-                                weekday: weekday as Weekday,
-                                open: open.trim(),
-                              })
-                              await reloadHours()
-                              notify('Abertura')
-                            } catch (err) {
-                              toast.error(
-                                errorMessage(err, 'Não foi possível salvar'),
-                              )
-                            }
+                        <Select
+                          value={hour.closed ? 'fechado' : 'aberto'}
+                          onValueChange={(value) => {
+                            void (async () => {
+                              try {
+                                await updateStudioHour({
+                                  weekday: weekday as Weekday,
+                                  closed: value === 'fechado',
+                                })
+                                await reloadHours()
+                                notify(
+                                  value === 'fechado' ? 'Dia fechado' : 'Dia aberto',
+                                )
+                              } catch (err) {
+                                toast.error(
+                                  errorMessage(err, 'Não foi possível salvar'),
+                                )
+                              }
+                            })()
                           }}
-                        />
+                        >
+                          <SelectTrigger className="h-8 w-[7.5rem]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectItem value="aberto">Aberto</SelectItem>
+                              <SelectItem value="fechado">Fechado</SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>
-                        <InlineCell
-                          value={hour.close}
-                          className="font-mono tabular-nums"
-                          onSave={async (close) => {
-                            if (!TIME_RE.test(close.trim())) {
-                              toast.error('Horário inválido (use HH:MM)')
-                              return
-                            }
-                            try {
-                              await updateStudioHour({
-                                weekday: weekday as Weekday,
-                                close: close.trim(),
-                              })
-                              await reloadHours()
-                              notify('Fechamento')
-                            } catch (err) {
-                              toast.error(
-                                errorMessage(err, 'Não foi possível salvar'),
-                              )
-                            }
-                          }}
-                        />
+                        {hour.closed ? (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        ) : (
+                          <InlineCell
+                            value={hour.open}
+                            className="font-mono tabular-nums"
+                            onSave={async (open) => {
+                              if (!TIME_RE.test(open.trim())) {
+                                toast.error('Horário inválido (use HH:MM)')
+                                return
+                              }
+                              try {
+                                await updateStudioHour({
+                                  weekday: weekday as Weekday,
+                                  open: open.trim(),
+                                })
+                                await reloadHours()
+                                notify('Abertura')
+                              } catch (err) {
+                                toast.error(
+                                  errorMessage(err, 'Não foi possível salvar'),
+                                )
+                              }
+                            }}
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {hour.closed ? (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        ) : (
+                          <InlineCell
+                            value={hour.close}
+                            className="font-mono tabular-nums"
+                            onSave={async (close) => {
+                              if (!TIME_RE.test(close.trim())) {
+                                toast.error('Horário inválido (use HH:MM)')
+                                return
+                              }
+                              try {
+                                await updateStudioHour({
+                                  weekday: weekday as Weekday,
+                                  close: close.trim(),
+                                })
+                                await reloadHours()
+                                notify('Fechamento')
+                              } catch (err) {
+                                toast.error(
+                                  errorMessage(err, 'Não foi possível salvar'),
+                                )
+                              }
+                            }}
+                          />
+                        )}
                       </TableCell>
                     </TableRow>
                   )
@@ -353,7 +437,7 @@ export function SettingsPage() {
                 <div>
                   <h3 className="text-sm font-semibold">Grade da agenda</h3>
                   <p className="text-xs text-muted-foreground">
-                    Horários disponíveis para marcar aulas
+                    Informe qualquer horário (ex.: 07:30, 11:00, 14:15)
                   </p>
                 </div>
                 <div className="w-36">
@@ -385,38 +469,82 @@ export function SettingsPage() {
                 </div>
               </div>
 
+              <form
+                className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-end"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void (async () => {
+                    const time = normalizeTimeInput(newSlotTime)
+                    if (!time) {
+                      toast.error('Informe o horário no formato HH:MM')
+                      return
+                    }
+                    if (timeSlots.some((s) => s.time === time)) {
+                      toast.error('Este horário já existe na grade')
+                      return
+                    }
+                    const period = periodForTime(time)
+                    setAddingSlot(true)
+                    try {
+                      const created = await createTimeSlot({
+                        time,
+                        period,
+                        capacity,
+                      })
+                      await reloadTimeSlots()
+                      setNewSlotTime('')
+                      toast.success('Horário adicionado', {
+                        description: `${created.time} · ${
+                          created.period === 'manha' ? 'Manhã' : 'Tarde'
+                        }`,
+                      })
+                    } catch (err) {
+                      toast.error(
+                        errorMessage(err, 'Não foi possível adicionar'),
+                      )
+                    } finally {
+                      setAddingSlot(false)
+                    }
+                  })()
+                }}
+              >
+                <Field className="min-w-[8rem] flex-1">
+                  <FieldLabel htmlFor="new-slot-time">Novo horário</FieldLabel>
+                  <Input
+                    id="new-slot-time"
+                    type="time"
+                    step={300}
+                    value={newSlotTime}
+                    onChange={(e) => setNewSlotTime(e.target.value)}
+                    className="font-mono tabular-nums"
+                    required
+                  />
+                </Field>
+                <Button type="submit" disabled={addingSlot || !newSlotTime}>
+                  <Plus data-icon="inline-start" />
+                  {addingSlot ? 'Adicionando…' : 'Adicionar'}
+                </Button>
+              </form>
+
               <SlotGroup
                 title="Manhã"
                 slots={morning}
                 onRename={async (slot, next) => {
-                  const time = next.trim()
-                  if (!TIME_RE.test(time)) {
+                  const time = normalizeTimeInput(next)
+                  if (!time) {
                     toast.error('Use o formato HH:MM')
                     return
                   }
                   if (time === slot.time) return
                   try {
-                    await updateTimeSlot(slot.id, { time })
+                    await updateTimeSlot(slot.id, {
+                      time,
+                      period: periodForTime(time),
+                    })
                     await reloadTimeSlots()
                     notify('Horário')
                   } catch (err) {
                     toast.error(errorMessage(err, 'Não foi possível renomear'))
-                  }
-                }}
-                onAdd={async () => {
-                  const time = suggestSlotTime('manha', timeSlots)
-                  try {
-                    const created = await createTimeSlot({
-                      time,
-                      period: 'manha',
-                      capacity,
-                    })
-                    await reloadTimeSlots()
-                    toast.success('Horário adicionado', {
-                      description: created.time,
-                    })
-                  } catch (err) {
-                    toast.error(errorMessage(err, 'Não foi possível adicionar'))
                   }
                 }}
                 onRemove={async (slot) => {
@@ -436,34 +564,21 @@ export function SettingsPage() {
                 title="Tarde"
                 slots={afternoon}
                 onRename={async (slot, next) => {
-                  const time = next.trim()
-                  if (!TIME_RE.test(time)) {
+                  const time = normalizeTimeInput(next)
+                  if (!time) {
                     toast.error('Use o formato HH:MM')
                     return
                   }
                   if (time === slot.time) return
                   try {
-                    await updateTimeSlot(slot.id, { time })
+                    await updateTimeSlot(slot.id, {
+                      time,
+                      period: periodForTime(time),
+                    })
                     await reloadTimeSlots()
                     notify('Horário')
                   } catch (err) {
                     toast.error(errorMessage(err, 'Não foi possível renomear'))
-                  }
-                }}
-                onAdd={async () => {
-                  const time = suggestSlotTime('tarde', timeSlots)
-                  try {
-                    const created = await createTimeSlot({
-                      time,
-                      period: 'tarde',
-                      capacity,
-                    })
-                    await reloadTimeSlots()
-                    toast.success('Horário adicionado', {
-                      description: created.time,
-                    })
-                  } catch (err) {
-                    toast.error(errorMessage(err, 'Não foi possível adicionar'))
                   }
                 }}
                 onRemove={async (slot) => {
@@ -781,50 +896,53 @@ function SlotGroup({
   title,
   slots,
   onRename,
-  onAdd,
   onRemove,
 }: {
   title: string
   slots: TimeSlotDto[]
   onRename: (slot: TimeSlotDto, next: string) => void
-  onAdd: () => void
   onRemove: (slot: TimeSlotDto) => void
 }) {
   return (
     <div className="rounded-lg border p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          {title}
+      <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        {title}
+        {slots.length > 0 ? (
+          <span className="ml-1 font-normal normal-case">
+            · {slots.length} horário{slots.length === 1 ? '' : 's'}
+          </span>
+        ) : null}
+      </p>
+      {slots.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Nenhum horário neste período.
         </p>
-        <Button type="button" size="xs" variant="outline" onClick={onAdd}>
-          <Plus data-icon="inline-start" />
-          Horário
-        </Button>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {slots.map((slot) => (
-          <div
-            key={slot.id}
-            className="flex items-center gap-1 rounded-lg border bg-background px-1.5 py-1"
-          >
-            <InlineCell
-              value={slot.time}
-              className="w-[4.5rem] font-mono text-sm tabular-nums"
-              onSave={(next) => onRename(slot, next)}
-            />
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              className="text-muted-foreground hover:text-destructive"
-              aria-label={`Remover ${slot.time}`}
-              onClick={() => onRemove(slot)}
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {slots.map((slot) => (
+            <div
+              key={slot.id}
+              className="flex items-center gap-1 rounded-lg border bg-background px-1.5 py-1"
             >
-              <Trash2 className="size-3.5" />
-            </Button>
-          </div>
-        ))}
-      </div>
+              <InlineCell
+                value={slot.time}
+                className="w-[4.5rem] font-mono text-sm tabular-nums"
+                onSave={(next) => onRename(slot, next)}
+              />
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                className="text-muted-foreground hover:text-destructive"
+                aria-label={`Remover ${slot.time}`}
+                onClick={() => onRemove(slot)}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

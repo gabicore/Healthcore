@@ -21,6 +21,8 @@ export const auth = betterAuth({
   trustedOrigins: [
     process.env.BETTER_AUTH_URL,
     process.env.NEXT_PUBLIC_APP_URL,
+    'https://studiobalnorio.com.br',
+    'https://www.studiobalnorio.com.br',
     'http://localhost:3000',
   ].filter(Boolean) as string[],
   emailAndPassword: {

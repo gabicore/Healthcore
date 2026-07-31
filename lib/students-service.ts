@@ -4,6 +4,7 @@ import {
   parseIsoDate,
   toDbPaymentMethod,
   toDbWeekday,
+  toIsoDateOnly,
 } from '@/lib/db-mappers'
 import { DEFAULT_STUDIO_ID } from '@/lib/constants'
 import {
@@ -78,7 +79,10 @@ export async function listStudents(params?: {
     where: {
       studioId: DEFAULT_STUDIO_ID,
       ...(params?.active === true
-        ? { active: true }
+        ? {
+            active: true,
+            contracts: { some: { status: 'ativo' } },
+          }
         : params?.active === false
           ? { active: false }
           : {}),
@@ -96,7 +100,37 @@ export async function listStudents(params?: {
     include: studentDetailInclude,
     orderBy: { name: 'asc' },
   })
-  return students.map(serializeStudent)
+
+  const activeContracts = students.length
+    ? await prisma.contract.findMany({
+        where: {
+          status: 'ativo',
+          studentId: { in: students.map((s) => s.id) },
+        },
+        orderBy: { startDate: 'desc' },
+        select: { studentId: true, startDate: true, endDate: true },
+      })
+    : []
+
+  const contractByStudent = new Map<
+    string,
+    { startDate: string; endDate: string }
+  >()
+  for (const contract of activeContracts) {
+    if (contractByStudent.has(contract.studentId)) continue
+    contractByStudent.set(contract.studentId, {
+      startDate: toIsoDateOnly(contract.startDate),
+      endDate: toIsoDateOnly(contract.endDate),
+    })
+  }
+
+  return students.map((student) => {
+    const serialized = serializeStudent(student)
+    return {
+      ...serialized,
+      activeContract: contractByStudent.get(student.id) ?? null,
+    }
+  })
 }
 
 export async function getStudentById(id: string) {
@@ -107,7 +141,19 @@ export async function getStudentById(id: string) {
     where: { id },
     include: studentDetailInclude,
   })
-  return student ? serializeStudent(student) : null
+  if (!student) return null
+
+  const governing = await findGoverningContract(id)
+  const serialized = serializeStudent(student)
+  return {
+    ...serialized,
+    activeContract: governing
+      ? {
+          startDate: toIsoDateOnly(governing.startDate),
+          endDate: toIsoDateOnly(governing.endDate),
+        }
+      : null,
+  }
 }
 
 export async function createStudentRecord(input: CreateStudentInput) {
@@ -137,7 +183,7 @@ export async function createStudentRecord(input: CreateStudentInput) {
       cep: input.cep ?? '',
       address: input.address ?? '',
       emergencyContact: input.emergencyContact ?? '',
-      active: input.active ?? true,
+      active: input.active ?? false,
       since: parseIsoDate(
         input.since ?? new Date().toISOString().slice(0, 10),
       ),
@@ -222,6 +268,15 @@ export async function updateStudentRecord(
     await assertScheduleFitsStudioHours(input.schedule)
     await assertScheduleFitsPlanFrequency(id, input.schedule, planId)
     await prisma.scheduleSlot.deleteMany({ where: { studentId: id } })
+  }
+
+  if (input.active === true) {
+    const canActivate = governingContract ?? (await findGoverningContract(id))
+    if (!canActivate) {
+      throw new Error(
+        'Aluno só pode ficar ativo com contrato assinado válido',
+      )
+    }
   }
 
   const updated = await prisma.student.update({

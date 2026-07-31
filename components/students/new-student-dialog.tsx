@@ -204,6 +204,12 @@ export function NewStudentDialog() {
                 onValueChange={(v) => {
                   if (v) setPlanId(v)
                 }}
+                items={Object.fromEntries(
+                  plans.map((p) => [
+                    p.id,
+                    `${p.frequencyLabel} — ${formatCurrency(p.price)}`,
+                  ]),
+                )}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Selecione um plano" />

@@ -78,6 +78,7 @@ export async function syncStudentWithActiveContract(contract: DbContract) {
         discountPercent: contract.discountPercent,
         dueDay: contract.dueDay,
         paymentMethod: contract.paymentMethod,
+        active: true,
       },
     })
     if (overflow.length > 0) {
@@ -99,10 +100,26 @@ export async function findGoverningContract(studentId: string) {
   })
 }
 
+/** Ativa ou desativa o aluno conforme existência de contrato assinado válido. */
+export async function syncStudentActiveFromContracts(studentId: string) {
+  const governing = await findGoverningContract(studentId)
+  await prisma.student.update({
+    where: { id: studentId },
+    data: { active: Boolean(governing) },
+  })
+  return Boolean(governing)
+}
+
 /** Garante que o aluno reflita o contrato ativo (assinado), se houver. */
 export async function syncStudentFromActiveContract(studentId: string) {
   const active = await findGoverningContract(studentId)
-  if (!active) return null
+  if (!active) {
+    await prisma.student.update({
+      where: { id: studentId },
+      data: { active: false },
+    })
+    return null
+  }
   await syncStudentWithActiveContract(active)
   return active
 }
@@ -357,6 +374,8 @@ export async function updateContractRecord(
   // Só contrato assinado (ativo) espelha financeiro e agenda.
   if (updated.status === 'ativo') {
     await syncStudentWithActiveContract(updated)
+  } else if (existing.status === 'ativo') {
+    await syncStudentActiveFromContracts(updated.studentId)
   }
 
   return serializeContract(updated)

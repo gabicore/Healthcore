@@ -50,7 +50,6 @@ import {
   getStudent,
   getWeekColumns,
   initials,
-  mergeWeekSessions,
   morningSlots,
   renameScheduleSlot,
   replaceScheduleSlots,
@@ -59,14 +58,18 @@ import {
   setAttendanceStatus,
   toIsoDate,
   upsertAttendanceSession,
+  upsertStudentInStore,
   type AttendanceStatus,
   type ClassSession,
   type WeekDayColumn,
 } from '@/lib/data'
+import { fetchStudents } from '@/lib/students-api'
 import { fetchStudioHours, fetchTimeSlots } from '@/lib/settings-api'
 import {
   createStudentSession,
+  fetchWeekAgenda,
   updateStudentSession,
+  upsertFixedStudentSession,
 } from '@/lib/sessions-api'
 import { cn } from '@/lib/utils'
 
@@ -93,6 +96,14 @@ function weekKey(monday: Date) {
   return toIsoDate(monday)
 }
 
+function isGeneratedFixedId(session: ClassSession) {
+  return (
+    session.type === 'fixa' &&
+    Boolean(session.studentId) &&
+    session.id.startsWith(`${session.studentId}-`)
+  )
+}
+
 export function WeeklyAgenda() {
   const today = useMemo(() => new Date(), [])
   const todayIso = toIsoDate(today)
@@ -100,10 +111,9 @@ export function WeeklyAgenda() {
   const [slotVersion, setSlotVersion] = useState(0)
   const [sessionsByWeek, setSessionsByWeek] = useState<
     Record<string, ClassSession[]>
-  >(() => {
-    const key = weekKey(getMonday(today))
-    return { [key]: mergeWeekSessions(getMonday(today), [], today) }
-  })
+  >({})
+  const [loadingWeek, setLoadingWeek] = useState(true)
+  const [reloadTick, setReloadTick] = useState(0)
   const [booking, setBooking] = useState<{
     date: string
     time: string
@@ -115,11 +125,14 @@ export function WeeklyAgenda() {
 
   useEffect(() => {
     let cancelled = false
-    void Promise.all([fetchTimeSlots(), fetchStudioHours()])
-      .then(([slots, hours]) => {
+    void Promise.all([fetchTimeSlots(), fetchStudioHours(), fetchStudents({ active: true })])
+      .then(([slots, hours, students]) => {
         if (cancelled) return
         replaceScheduleSlots(slots)
         replaceStudioHours(hours)
+        for (const student of students) {
+          upsertStudentInStore(student)
+        }
         setSlotVersion((v) => v + 1)
       })
       .catch(() => {
@@ -129,6 +142,48 @@ export function WeeklyAgenda() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const from = toIsoDate(monday)
+    const to = toIsoDate(addDays(monday, 5))
+    const nextKey = weekKey(monday)
+    setLoadingWeek(true)
+    void fetchWeekAgenda(from, to)
+      .then((agenda) => {
+        if (cancelled) return
+        for (const student of agenda.students) {
+          const existing = getStudent(student.id)
+          if (existing) {
+            upsertStudentInStore({
+              ...existing,
+              name: student.name,
+              planId: student.planId,
+              schedule: student.schedule,
+              active: student.active,
+            })
+          }
+        }
+        setSessionsByWeek((prev) => ({
+          ...prev,
+          [nextKey]: agenda.sessions,
+        }))
+      })
+      .catch(() => {
+        if (cancelled) return
+        toast.error('Não foi possível carregar a agenda da semana')
+        setSessionsByWeek((prev) => ({
+          ...prev,
+          [nextKey]: prev[nextKey] ?? [],
+        }))
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingWeek(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [monday, reloadTick])
 
   const key = weekKey(monday)
   const columns = useMemo(() => getWeekColumns(monday), [monday])
@@ -159,26 +214,15 @@ export function WeeklyAgenda() {
     return `Manhã ${morning} · Tarde ${afternoon} · até ${SLOT_CAPACITY} vagas/horário`
   }, [slotVersion])
 
-  // Sempre recalcula a grade fixa a partir dos alunos (reposições manuais são preservadas).
   const sessions = useMemo(() => {
-    void slotVersion
-    const cached = sessionsByWeek[key] ?? []
-    return mergeWeekSessions(monday, cached, today)
-  }, [sessionsByWeek, key, monday, today, slotVersion])
-
-  function ensureWeek(nextMonday: Date) {
-    const nextKey = weekKey(nextMonday)
-    setSessionsByWeek((prev) => {
-      const existing = prev[nextKey] ?? []
-      return {
-        ...prev,
-        [nextKey]: mergeWeekSessions(nextMonday, existing, today),
-      }
-    })
-  }
+    const raw = sessionsByWeek[key] ?? []
+    // Avulsa/reposição/experimental cancelada sai da grade (não conta como falta).
+    return raw.filter(
+      (s) => !(s.status === 'cancelada' && s.type !== 'fixa'),
+    )
+  }, [sessionsByWeek, key])
 
   function goToWeek(nextMonday: Date) {
-    ensureWeek(nextMonday)
     setMonday(nextMonday)
   }
 
@@ -208,7 +252,7 @@ export function WeeklyAgenda() {
   }
 
   function updateStatus(sessionId: string, status: AttendanceStatus) {
-    const base = mergeWeekSessions(monday, sessionsByWeek[key] ?? [], today)
+    const base = sessionsByWeek[key] ?? []
     const current = base.find((s) => s.id === sessionId)
     if (!current) return
 
@@ -219,17 +263,6 @@ export function WeeklyAgenda() {
       [key]: base.map((s) => (s.id === sessionId ? updated : s)),
     }))
 
-    if (
-      current.studentId &&
-      !current.id.startsWith(`${current.studentId}-`)
-    ) {
-      void updateStudentSession(current.studentId, current.id, {
-        status,
-      }).catch(() => {
-        /* agenda local segue; perfil sincroniza ao reabrir */
-      })
-    }
-
     const labels: Record<AttendanceStatus, string> = {
       presente: 'Presença confirmada',
       falta: 'Falta registrada',
@@ -237,9 +270,58 @@ export function WeeklyAgenda() {
       cancelada: 'Aula cancelada',
       agendada: 'Status atualizado',
     }
-    toast.success(labels[status], {
-      description: 'Presença atualizada',
-    })
+
+    if (!current.studentId) {
+      toast.success(labels[status], { description: 'Presença atualizada' })
+      return
+    }
+
+    const persist = isGeneratedFixedId(current)
+      ? upsertFixedStudentSession(current.studentId, {
+          date: current.date,
+          time: current.time,
+          weekday: current.weekday,
+          status,
+          notes: current.notes,
+        }).then((saved) => {
+          setSessionsByWeek((prev) => ({
+            ...prev,
+            [key]: (prev[key] ?? []).map((s) =>
+              s.id === sessionId ||
+              (s.studentId === saved.studentId &&
+                s.date === saved.date &&
+                s.time === saved.time &&
+                s.type === 'fixa')
+                ? { ...saved }
+                : s,
+            ),
+          }))
+          try {
+            upsertAttendanceSession(saved)
+          } catch {
+            /* ledger local */
+          }
+          return saved
+        })
+      : updateStudentSession(current.studentId, current.id, { status })
+
+    void persist
+      .then(() => {
+        toast.success(labels[status], { description: 'Presença atualizada' })
+      })
+      .catch((error) => {
+        setSessionsByWeek((prev) => ({
+          ...prev,
+          [key]: (prev[key] ?? []).map((s) =>
+            s.id === sessionId ? current : s,
+          ),
+        }))
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Não foi possível salvar a presença',
+        )
+      })
   }
 
   function handleSave(session: ClassSession) {
@@ -251,90 +333,97 @@ export function WeeklyAgenda() {
       ),
     )
     const targetKey = weekKey(sessionMonday)
+    const base = (sessionsByWeek[targetKey] ?? []).filter(
+      (s) => s.id !== session.id,
+    )
 
-    setSessionsByWeek((prev) => {
-      const stripped: Record<string, ClassSession[]> = {}
-      for (const [week, list] of Object.entries(prev)) {
-        stripped[week] = list.filter((s) => s.id !== session.id)
-      }
-
-      const base = mergeWeekSessions(
-        sessionMonday,
-        stripped[targetKey] ?? [],
-        today,
-      ).filter((s) => s.id !== session.id)
-
-      const occupied = base.filter(
-        (s) =>
-          s.date === session.date &&
-          s.time === session.time &&
-          s.status !== 'cancelada',
-      ).length
-      if (occupied >= slotCapacity) {
-        toast.error('Horário lotado', {
-          description: `Este horário já tem ${slotCapacity} alunos.`,
-        })
-        return prev
-      }
-      if (!availableSlotsForWeekday(session.weekday).includes(session.time)) {
-        toast.error('Estúdio fechado', {
-          description: 'Não é possível agendar neste dia ou horário.',
-        })
-        return prev
-      }
-      const already = base.some(
-        (s) =>
-          s.studentId === session.studentId &&
-          s.date === session.date &&
-          s.time === session.time &&
-          s.status !== 'cancelada',
+    const occupied = base.filter(
+      (s) =>
+        s.date === session.date &&
+        s.time === session.time &&
+        s.status !== 'cancelada',
+    ).length
+    if (occupied >= slotCapacity) {
+      toast.error('Horário lotado', {
+        description: `Este horário já tem ${slotCapacity} alunos.`,
+      })
+      return
+    }
+    if (!availableSlotsForWeekday(session.weekday).includes(session.time)) {
+      toast.error('Estúdio fechado', {
+        description: 'Não é possível agendar neste dia ou horário.',
+      })
+      return
+    }
+    const already = base.some(
+      (s) =>
+        s.studentId === session.studentId &&
+        s.date === session.date &&
+        s.time === session.time &&
+        s.status !== 'cancelada',
+    )
+    if (already) {
+      toast.error(
+        session.type === 'experimental'
+          ? 'Cliente já está neste horário'
+          : 'Aluno já está neste horário',
       )
-      if (already) {
-        toast.error(
-          session.type === 'experimental'
-            ? 'Cliente já está neste horário'
-            : 'Aluno já está neste horário',
-        )
-        return prev
-      }
-      try {
-        const saved = upsertAttendanceSession(session)
-        if (
-          session.studentId &&
-          (session.type === 'reposicao' ||
-            session.type === 'avulsa' ||
-            session.type === 'experimental')
-        ) {
-          void createStudentSession(session.studentId, {
-            date: session.date,
-            time: session.time,
-            type: session.type,
-            status: session.status,
-            notes: session.notes,
-            professionalId: session.professionalId,
-          }).catch((error) => {
+      return
+    }
+
+    try {
+      const saved = upsertAttendanceSession(session)
+      setSessionsByWeek((prev) => ({
+        ...prev,
+        [targetKey]: [...base, saved].sort((a, b) =>
+          `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
+        ),
+      }))
+
+      if (
+        session.studentId &&
+        (session.type === 'reposicao' ||
+          session.type === 'avulsa' ||
+          session.type === 'experimental')
+      ) {
+        void createStudentSession(session.studentId, {
+          date: session.date,
+          time: session.time,
+          type: session.type,
+          status: session.status,
+          notes: session.notes,
+          professionalId: session.professionalId,
+        })
+          .then((created) => {
+            setSessionsByWeek((prev) => ({
+              ...prev,
+              [targetKey]: (prev[targetKey] ?? []).map((s) =>
+                s.id === saved.id ? created : s,
+              ),
+            }))
+            try {
+              upsertAttendanceSession(created)
+            } catch {
+              /* ledger */
+            }
+          })
+          .catch((error) => {
             toast.error(
               error instanceof Error
                 ? error.message
                 : 'Não foi possível salvar a aula no servidor',
             )
+            setReloadTick((t) => t + 1)
           })
-        }
-        return {
-          ...stripped,
-          [targetKey]: [...base, saved].sort((a, b) =>
-            `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
-          ),
-        }
-      } catch (err) {
-        toast.error(
-          err instanceof Error
-            ? err.message
-            : 'Não foi possível agendar neste horário',
-        )
-        return prev
       }
-    })
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível agendar neste horário',
+      )
+      return
+    }
 
     if (targetKey !== key) {
       setMonday(sessionMonday)
@@ -361,7 +450,10 @@ export function WeeklyAgenda() {
     const presentes = sessions.filter((s) => s.status === 'presente').length
     const faltas = sessions.filter((s) => s.status === 'falta').length
     const pendentes = sessions.filter((s) => s.status === 'agendada').length
-    const canceladas = sessions.filter((s) => s.status === 'cancelada').length
+    // Só aulas fixas canceladas entram no card (avulsa cancelada já foi filtrada).
+    const canceladas = sessions.filter(
+      (s) => s.status === 'cancelada' && s.type === 'fixa',
+    ).length
     return { total, presentes, faltas, pendentes, canceladas }
   }, [sessions])
 
@@ -371,7 +463,7 @@ export function WeeklyAgenda() {
     <>
       <PageHeader
         title="Agenda"
-        description="Grade dos alunos · reposição, avulsa ou experimental pelo + ou Marcar aula"
+        description="Grade dos alunos com contrato ativo · mesma agenda fixa do perfil · reposição/avulsa pelo +"
       >
         <NewClassDialog
           defaultDate={booking?.date ?? todayIso}
@@ -417,7 +509,7 @@ export function WeeklyAgenda() {
                 {formatWeekRange(monday)}
               </span>
               <span className="text-xs text-muted-foreground">
-                {slotRangeHint}
+                {loadingWeek ? 'Carregando agenda…' : slotRangeHint}
               </span>
             </div>
           </div>
@@ -577,8 +669,9 @@ export function WeeklyAgenda() {
           <CardHeader className="pb-3">
             <CardTitle>Como usar</CardTitle>
             <CardDescription>
-              Clique no nome do aluno para abrir o perfil. Use os três pontinhos
-              para marcar presença, falta ou cancelar. Cada horário tem até{' '}
+              A grade fixa vem da agenda do aluno (horários do contrato ativo).
+              Clique no nome para abrir o perfil. Use os três pontinhos para
+              marcar presença, falta ou cancelar. Cada horário tem até{' '}
               {slotCapacity} vagas.
             </CardDescription>
           </CardHeader>

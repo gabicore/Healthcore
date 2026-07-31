@@ -99,6 +99,9 @@ export function InlineField({
                   setDraft(next)
                   commit(next)
                 }}
+                items={Object.fromEntries(
+                  options.map((opt) => [opt.value, opt.label]),
+                )}
               >
                 <SelectTrigger id={fieldId} className="w-full">
                   <SelectValue placeholder={placeholder ?? 'Selecione'} />

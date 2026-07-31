@@ -11,6 +11,8 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed-contracts": "tsx prisma/seed-contracts.ts",
+    "db:wipe-agenda": "tsx prisma/wipe-agenda-contracts.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },

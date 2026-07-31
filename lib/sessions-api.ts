@@ -1,5 +1,32 @@
 import { parseJson } from '@/lib/api-client'
-import type { ClassSession } from '@/lib/data'
+import type { ClassSession, ScheduleSlot } from '@/lib/data'
+
+export type WeekAgendaStudent = {
+  id: string
+  name: string
+  active: boolean
+  planId: string
+  schedule: ScheduleSlot[]
+  weeklyLimit: number
+  contractStart: string
+  contractEnd: string
+}
+
+export type WeekAgendaResponse = {
+  sessions: ClassSession[]
+  students: WeekAgendaStudent[]
+}
+
+export async function fetchWeekAgenda(
+  from: string,
+  to: string,
+): Promise<WeekAgendaResponse> {
+  const search = new URLSearchParams({ from, to })
+  const response = await fetch(`/api/agenda?${search.toString()}`, {
+    cache: 'no-store',
+  })
+  return parseJson<WeekAgendaResponse>(response)
+}
 
 export async function fetchStudentSessions(
   studentId: string,

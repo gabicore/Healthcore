@@ -887,12 +887,6 @@ export function StudentContractsPanel({
                   onValueChange={(v) => {
                     if (v) setCreatePlanId(v)
                   }}
-                  items={Object.fromEntries(
-                    plans.map((p) => [
-                      p.id,
-                      `${planPeriodLabel[p.period]} · ${p.frequencyLabel} — ${formatCurrency(p.price)}`,
-                    ]),
-                  )}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Selecione um plano" />
@@ -1223,12 +1217,6 @@ export function StudentContractsPanel({
                           onValueChange={(v) => {
                             if (v) handlePlanChange(v)
                           }}
-                          items={Object.fromEntries(
-                            plans.map((p) => [
-                              p.id,
-                              `${planPeriodLabel[p.period]} · ${p.frequencyLabel} — ${formatCurrency(p.price)}`,
-                            ]),
-                          )}
                         >
                           <SelectTrigger className="w-full">
                             <SelectValue />

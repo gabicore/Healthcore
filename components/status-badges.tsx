@@ -113,9 +113,6 @@ export function PaymentStatusSelect({
       onValueChange={(next) => {
         if (next) onChange(next as PaymentStatus)
       }}
-      items={Object.fromEntries(
-        paymentStatusOptions.map((option) => [option.value, option.label]),
-      )}
     >
       <SelectTrigger
         size={size}

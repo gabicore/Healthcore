@@ -101,10 +101,7 @@ export function NewClassDialog({
   const isExperimental = type === 'experimental'
 
   const activeStudents = useMemo(
-    () =>
-      students.filter(
-        (s) => s.active && s.activeContract != null,
-      ),
+    () => students.filter((s) => s.active),
     [students],
   )
 
@@ -347,6 +344,8 @@ export function NewClassDialog({
   const selectedType = type === 'fixa' ? 'reposicao' : type
   const morningOptions = slots.filter((t) => morningSlots.includes(t))
   const afternoonOptions = slots.filter((t) => afternoonSlots.includes(t))
+  const selectedProfessional =
+    professionals.find((p) => p.id === professionalId)?.name ?? 'Selecione'
   const dialogTitle = isEditing
     ? editingSession?.type === 'experimental'
       ? 'Editar experimental'
@@ -420,9 +419,6 @@ export function NewClassDialog({
               <Select
                 value={studentId || null}
                 onValueChange={(v) => setStudentId(v ?? '')}
-                items={Object.fromEntries(
-                  activeStudents.map((s) => [s.id, s.name]),
-                )}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue
@@ -507,12 +503,11 @@ export function NewClassDialog({
                   onValueChange={(v) =>
                     setProfessionalId(v ?? professionals[0]?.id ?? '')
                   }
-                  items={Object.fromEntries(
-                    professionals.map((p) => [p.id, p.name]),
-                  )}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Selecione" />
+                    <SelectValue placeholder="Selecione">
+                      {selectedProfessional}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>

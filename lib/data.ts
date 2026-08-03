@@ -251,11 +251,6 @@ export type Student = {
   paymentMethod: PaymentMethod
   // Agenda fixa
   schedule: ScheduleSlot[]
-  /**
-   * Contrato ativo (listagem/API). `null` = sem contrato assinado;
-   * `undefined` = não carregado.
-   */
-  activeContract?: { startDate: string; endDate: string } | null
   // Históricos
   assessments: PhysicalAssessment[]
   evolutions: Evolution[]
@@ -2751,57 +2746,12 @@ export const paymentMethods: PaymentMethod[] = [
   'Dinheiro',
 ]
 
-export function nextClass(student: Student, today = new Date()): string {
+export function nextClass(student: Student): string {
   if (student.schedule.length === 0) return '—'
-  // Sem contrato ativo a grade não conta (mesma regra da /agenda).
-  if (student.activeContract === null) return '—'
-
-  const todayStart = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  )
-  let from = todayStart
-  if (student.activeContract?.startDate) {
-    const start = parseIsoDate(student.activeContract.startDate)
-    if (start > from) from = start
-  }
-  const end = student.activeContract?.endDate
-    ? parseIsoDate(student.activeContract.endDate)
-    : null
-
-  for (let offset = 0; offset < 60; offset++) {
-    const day = new Date(
-      from.getFullYear(),
-      from.getMonth(),
-      from.getDate() + offset,
-    )
-    if (end && day > end) break
-    const weekday = getWeekdayFromDate(day)
-    if (!weekday) continue
-
-    const slots = student.schedule
-      .filter((s) => s.weekday === weekday)
-      .slice()
-      .sort((a, b) => a.time.localeCompare(b.time))
-
-    for (const slot of slots) {
-      if (offset === 0 && day.getTime() === todayStart.getTime()) {
-        const [hh, mm] = slot.time.split(':').map(Number)
-        const slotAt = new Date(
-          day.getFullYear(),
-          day.getMonth(),
-          day.getDate(),
-          hh,
-          mm,
-        )
-        if (slotAt.getTime() <= today.getTime()) continue
-      }
-      return `${weekday} · ${slot.time}`
-    }
-  }
-
-  return '—'
+  const first = [...student.schedule].sort((a, b) =>
+    (a.weekday + a.time).localeCompare(b.weekday + b.time),
+  )[0]
+  return `${first.weekday} · ${first.time}`
 }
 
 export function initials(name: string) {

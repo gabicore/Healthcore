@@ -1130,9 +1130,6 @@ export function CampaignsPage() {
                   onValueChange={(v) => {
                     if (typeof v === 'string' && v) applyTemplate(v)
                   }}
-                  items={Object.fromEntries(
-                    campaignMessageTemplates.map((tpl) => [tpl.id, tpl.name]),
-                  )}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Aplicar um modelo" />

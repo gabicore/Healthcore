@@ -420,37 +420,18 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                     <FieldLabel>Situação</FieldLabel>
                     <Select
                       value={form.active ? 'ativo' : 'inativo'}
-                      onValueChange={(v) => {
-                        if (v === 'ativo' && !hasActiveContract) {
-                          toast.error(
-                            'Aluno só pode ficar ativo com contrato assinado válido',
-                          )
-                          return
-                        }
-                        update('active', v === 'ativo')
-                      }}
-                      items={{ ativo: 'Ativo', inativo: 'Inativo' }}
+                      onValueChange={(v) => update('active', v === 'ativo')}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
-                          <SelectItem
-                            value="ativo"
-                            disabled={!hasActiveContract}
-                          >
-                            Ativo
-                          </SelectItem>
+                          <SelectItem value="ativo">Ativo</SelectItem>
                           <SelectItem value="inativo">Inativo</SelectItem>
                         </SelectGroup>
                       </SelectContent>
                     </Select>
-                    {!hasActiveContract ? (
-                      <p className="text-xs text-muted-foreground">
-                        Sem contrato assinado o aluno permanece inativo.
-                      </p>
-                    ) : null}
                   </Field>
                 </FieldGroup>
               </TabsContent>
@@ -541,12 +522,6 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                       onValueChange={(v) => {
                         if (v) handlePlanChange(v)
                       }}
-                      items={Object.fromEntries(
-                        plans.map((p) => [
-                          p.id,
-                          `${p.frequencyLabel} — ${formatCurrency(p.price)}`,
-                        ]),
-                      )}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Selecione um plano" />

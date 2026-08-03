@@ -2,13 +2,7 @@ import type {
   AttendanceStatus,
   ClassSession,
   ClassSessionType,
-  ScheduleSlot,
   Weekday,
-} from '@/lib/data'
-import {
-  scheduleWithinPlanLimit,
-  slotFitsStudioHour,
-  toIsoDate,
 } from '@/lib/data'
 import { DEFAULT_STUDIO_ID } from '@/lib/constants'
 import {
@@ -18,8 +12,6 @@ import {
   toIsoDateOnly,
 } from '@/lib/db-mappers'
 import { prisma } from '@/lib/prisma'
-import { serializeSchedule } from '@/lib/serializers/student'
-import { listStudioHours, listTimeSlots } from '@/lib/settings-service'
 
 export type CreateSessionInput = {
   date: string
@@ -350,167 +342,4 @@ export async function updateSessionRecord(
     },
   })
   return serializeSession(updated)
-}
-
-export type WeekAgendaStudent = {
-  id: string
-  name: string
-  active: boolean
-  planId: string
-  schedule: ScheduleSlot[]
-  weeklyLimit: number
-  contractStart: string
-  contractEnd: string
-}
-
-/**
- * Agenda da semana do estúdio: aulas fixas a partir de ScheduleSlot +
- * frequência do contrato ativo (igual ao perfil do aluno), mescladas com
- * ClassSession persistidas (reposições, avulsas, status de presença).
- */
-export async function listWeekAgenda(fromDate: string, toDate: string) {
-  const from = parseIsoDate(fromDate)
-  const to = parseIsoDate(toDate)
-  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
-    throw new Error('Intervalo de datas inválido')
-  }
-
-  const todayIso = toIsoDate(new Date())
-  const [studioHours, timeSlots, students, persistedRows] = await Promise.all([
-    listStudioHours(),
-    listTimeSlots(),
-    prisma.student.findMany({
-      where: { studioId: DEFAULT_STUDIO_ID, active: true },
-      include: {
-        schedule: true,
-        contracts: {
-          where: { status: 'ativo' },
-          orderBy: { startDate: 'desc' },
-          take: 1,
-        },
-      },
-      orderBy: { name: 'asc' },
-    }),
-    prisma.classSession.findMany({
-      where: {
-        studioId: DEFAULT_STUDIO_ID,
-        date: { gte: from, lte: to },
-      },
-      orderBy: [{ date: 'asc' }, { time: 'asc' }],
-    }),
-  ])
-
-  const hourByWeekday = new Map(studioHours.map((h) => [h.weekday, h]))
-  const gradeTimes = timeSlots.map((s) => s.time)
-  const planIds = [
-    ...new Set(
-      students
-        .map((s) => s.contracts[0]?.planId)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ]
-  const plans = planIds.length
-    ? await prisma.plan.findMany({ where: { id: { in: planIds } } })
-    : []
-  const frequencyByPlan = new Map(plans.map((p) => [p.id, p.frequency]))
-
-  const agendaStudents: WeekAgendaStudent[] = []
-  const generatedFixed: ClassSession[] = []
-
-  for (const student of students) {
-    const contract = student.contracts[0]
-    // Sem contrato ativo a agenda fica vazia — mesma regra do perfil.
-    if (!contract) continue
-
-    const contractStart = toIsoDateOnly(contract.startDate)
-    const contractEnd = toIsoDateOnly(contract.endDate)
-    const weeklyLimit = frequencyByPlan.get(contract.planId) ?? 1
-    const limited = scheduleWithinPlanLimit(
-      serializeSchedule(student.schedule),
-      weeklyLimit,
-    )
-
-    agendaStudents.push({
-      id: student.id,
-      name: student.name,
-      active: student.active,
-      planId: contract.planId,
-      schedule: limited,
-      weeklyLimit,
-      contractStart,
-      contractEnd,
-    })
-
-    if (limited.length === 0) continue
-
-    const cursor = new Date(from.getTime())
-    while (cursor <= to) {
-      const iso = toIsoDateOnly(cursor)
-      if (iso >= contractStart && iso <= contractEnd) {
-        let weekday: Weekday
-        try {
-          weekday = weekdayFromIsoDate(iso)
-        } catch {
-          cursor.setDate(cursor.getDate() + 1)
-          continue
-        }
-        const hour = hourByWeekday.get(weekday)
-        for (const slot of limited) {
-          if (slot.weekday !== weekday) continue
-          if (gradeTimes.length > 0 && !gradeTimes.includes(slot.time)) continue
-          if (!slotFitsStudioHour(hour, slot.time)) continue
-          generatedFixed.push({
-            id: `${student.id}-${iso}-${slot.time}`,
-            studentId: student.id,
-            date: iso,
-            weekday,
-            time: slot.time,
-            status: iso > todayIso ? 'agendada' : 'presente',
-            type: 'fixa',
-          })
-        }
-      }
-      cursor.setDate(cursor.getDate() + 1)
-    }
-  }
-
-  const persisted = persistedRows.map(serializeSession)
-  const byFixedKey = new Map<string, ClassSession>()
-
-  for (const session of generatedFixed) {
-    byFixedKey.set(
-      `${session.studentId}|${session.date}|${session.time}`,
-      session,
-    )
-  }
-
-  const manuals: ClassSession[] = []
-  for (const record of persisted) {
-    if (record.type === 'fixa' && record.studentId) {
-      const key = `${record.studentId}|${record.date}|${record.time}`
-      const base = byFixedKey.get(key)
-      if (base) {
-        byFixedKey.set(key, {
-          ...base,
-          id: record.id,
-          status: record.status,
-          notes: record.notes,
-          professionalId: record.professionalId,
-        })
-      } else {
-        // Fixa persistida fora da grade atual (ex.: horário removido) ainda aparece.
-        byFixedKey.set(key, record)
-      }
-      continue
-    }
-    manuals.push(record)
-  }
-
-  const sessions = [...byFixedKey.values(), ...manuals].sort((a, b) =>
-    `${a.date}${a.time}${a.studentId}`.localeCompare(
-      `${b.date}${b.time}${b.studentId}`,
-    ),
-  )
-
-  return { sessions, students: agendaStudents }
 }

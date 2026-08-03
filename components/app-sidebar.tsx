@@ -7,6 +7,7 @@ import {
   CalendarDays,
   LayoutDashboard,
   LogOut,
+  Megaphone,
   Settings,
   Users,
   Wallet,
@@ -37,6 +38,7 @@ const nav = [
   { title: 'Dashboard', href: '/', icon: LayoutDashboard },
   { title: 'Alunos', href: '/alunos', icon: Users },
   { title: 'Agenda', href: '/agenda', icon: CalendarDays },
+  { title: 'Campanhas', href: '/campanhas', icon: Megaphone },
   { title: 'Financeiro', href: '/financeiro', icon: Wallet },
   { title: 'Configurações', href: '/configuracoes', icon: Settings },
 ]

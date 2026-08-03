@@ -78,9 +78,6 @@ export function InlineCell({
             setDraft(next)
             commit(next)
           }}
-          items={Object.fromEntries(
-            options.map((opt) => [opt.value, opt.label]),
-          )}
         >
           <SelectTrigger id={fieldId} size="sm" className={cn('w-full', className)}>
             <SelectValue placeholder={placeholder ?? 'Selecione'} />

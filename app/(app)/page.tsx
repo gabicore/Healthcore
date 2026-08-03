@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowUpRight,
@@ -33,19 +33,17 @@ import {
   formatCurrency,
   formatShortDate,
   formatWeekdayLabel,
+  getDayExperimentalSessions,
   getDayLatestEvolutions,
-  getMonday,
+  getDaySessions,
   getStudent,
   getWeekdayFromDate,
   initials,
   sessionParticipantName,
   toIsoDate,
   upsertAttendanceSession,
-  upsertStudentInStore,
   type ClassSession,
 } from '@/lib/data'
-import { fetchWeekAgenda } from '@/lib/sessions-api'
-import { fetchStudents } from '@/lib/students-api'
 
 function StatCard({
   title,
@@ -79,49 +77,6 @@ export default function DashboardPage() {
   const todayIso = toIsoDate(today)
   const todayWeekday = getWeekdayFromDate(today)
   const [agendaTick, setAgendaTick] = useState(0)
-  const [todaySessions, setTodaySessions] = useState<ClassSession[]>([])
-
-  useEffect(() => {
-    let cancelled = false
-    const monday = getMonday(today)
-    const from = toIsoDate(monday)
-    const to = toIsoDate(
-      new Date(
-        monday.getFullYear(),
-        monday.getMonth(),
-        monday.getDate() + 5,
-      ),
-    )
-    void Promise.all([
-      fetchWeekAgenda(from, to),
-      fetchStudents({ active: true }).catch(() => []),
-    ]).then(([agenda, list]) => {
-      if (cancelled) return
-      for (const student of list) {
-        upsertStudentInStore(student)
-      }
-      for (const student of agenda.students) {
-        const existing = getStudent(student.id)
-        if (existing) {
-          upsertStudentInStore({
-            ...existing,
-            name: student.name,
-            planId: student.planId,
-            schedule: student.schedule,
-            active: student.active,
-          })
-        }
-      }
-      setTodaySessions(
-        agenda.sessions.filter(
-          (s) => s.date === todayIso && s.status !== 'cancelada',
-        ),
-      )
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [today, todayIso, agendaTick])
 
   const pendingPayments = students.flatMap((s) =>
     s.payments
@@ -133,11 +88,15 @@ export default function DashboardPage() {
     0,
   )
 
-  const todayAgenda = todaySessions
-  const experimentalToday = useMemo(
-    () => todaySessions.filter((s) => s.type === 'experimental'),
-    [todaySessions],
-  )
+  const todayAgenda = useMemo(() => {
+    void agendaTick
+    return getDaySessions(today)
+  }, [today, agendaTick])
+
+  const experimentalToday = useMemo(() => {
+    void agendaTick
+    return getDayExperimentalSessions(today)
+  }, [today, agendaTick])
 
   const dayEvolutions = useMemo(() => getDayLatestEvolutions(today), [today])
 

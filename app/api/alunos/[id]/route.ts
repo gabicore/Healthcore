@@ -38,8 +38,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       }
       if (
         error instanceof Error &&
-        (error.message.includes('contrato ativo') ||
-          error.message.includes('contrato assinado'))
+        error.message.includes('contrato ativo')
       ) {
         return jsonError(error.message, 400)
       }

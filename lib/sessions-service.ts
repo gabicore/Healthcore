@@ -21,6 +21,8 @@ export type CreateSessionInput = {
   notes?: string
   professionalId?: string
   guestName?: string
+  /** Id da aula fixa coberta (reposição). */
+  coversSessionId?: string
 }
 
 function weekdayFromIsoDate(iso: string): Weekday {
@@ -53,6 +55,7 @@ function serializeSession(row: {
   type: ClassSessionType
   professionalId: string | null
   notes: string | null
+  coversSessionId?: string | null
 }): ClassSession {
   return {
     id: row.id,
@@ -65,6 +68,7 @@ function serializeSession(row: {
     type: row.type,
     professionalId: row.professionalId ?? undefined,
     notes: row.notes ?? undefined,
+    coversSessionId: row.coversSessionId ?? undefined,
   }
 }
 
@@ -107,8 +111,10 @@ export async function createStudentSessionRecord(
   const type = input.type ?? 'reposicao'
   const status = input.status ?? 'agendada'
 
+  let coversSessionId: string | null = input.coversSessionId ?? null
+
   if (type === 'reposicao') {
-    await assertMakeupAllowed(studentId)
+    coversSessionId = await assertMakeupAllowed(studentId, coversSessionId)
     await assertMakeupPlacement({
       studentId,
       sessionIdToIgnore: null,
@@ -131,6 +137,7 @@ export async function createStudentSessionRecord(
       notes: input.notes ?? null,
       professionalId: input.professionalId ?? null,
       guestName: input.guestName ?? null,
+      coversSessionId,
     },
   })
 
@@ -151,7 +158,7 @@ async function getActiveContractRange(studentId: string) {
   }
 }
 
-/** Saldo de reposições no contrato ativo: faltas/cancelamentos − reposições. */
+/** Saldo de reposições no contrato ativo (vínculo explícito + FIFO legado). */
 export async function getMakeupAllowanceForStudent(studentId: string) {
   const range = await getActiveContractRange(studentId)
   const rows = await prisma.classSession.findMany({
@@ -166,25 +173,48 @@ export async function getMakeupAllowanceForStudent(studentId: string) {
           }
         : {}),
     },
-    select: { type: true, status: true, date: true },
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      date: true,
+      coversSessionId: true,
+    },
   })
-  const missed = rows.filter(
-    (r) =>
-      r.type === 'fixa' &&
-      (r.status === 'falta' || r.status === 'cancelada'),
-  ).length
-  const used = rows.filter(
+  const missedRows = rows
+    .filter(
+      (r) =>
+        r.type === 'fixa' &&
+        (r.status === 'falta' || r.status === 'cancelada'),
+    )
+    .sort(
+      (a, b) =>
+        toIsoDateOnly(a.date).localeCompare(toIsoDateOnly(b.date)) ||
+        a.id.localeCompare(b.id),
+    )
+  const usedRows = rows.filter(
     (r) => r.type === 'reposicao' && r.status !== 'cancelada',
-  ).length
+  )
+  const linkedCovered = new Set(
+    usedRows
+      .map((r) => r.coversSessionId)
+      .filter((id): id is string => Boolean(id)),
+  )
+  const unlinkedUsed = usedRows.filter((r) => !r.coversSessionId).length
+  const uncovered = missedRows.filter((r) => !linkedCovered.has(r.id))
+  const remaining = Math.max(0, uncovered.length - unlinkedUsed)
   return {
-    missed,
-    used,
-    remaining: Math.max(0, missed - used),
+    missed: missedRows.length,
+    used: usedRows.length,
+    remaining,
     range,
   }
 }
 
-async function assertMakeupAllowed(studentId: string) {
+async function assertMakeupAllowed(
+  studentId: string,
+  coversSessionId: string | null,
+): Promise<string | null> {
   const { remaining, missed, used, range } =
     await getMakeupAllowanceForStudent(studentId)
   if (!range) {
@@ -192,6 +222,34 @@ async function assertMakeupAllowed(studentId: string) {
       'Reposição só é permitida com contrato ativo. Ative um contrato antes de remarcar.',
     )
   }
+
+  if (coversSessionId) {
+    const covered = await prisma.classSession.findFirst({
+      where: {
+        id: coversSessionId,
+        studentId,
+        type: 'fixa',
+        status: { in: ['falta', 'cancelada'] },
+      },
+    })
+    if (!covered) {
+      throw new Error(
+        'Aula de origem inválida. Remarque a partir de uma falta ou cancelamento de aula fixa.',
+      )
+    }
+    const already = await prisma.classSession.findFirst({
+      where: {
+        coversSessionId,
+        type: 'reposicao',
+        status: { not: 'cancelada' },
+      },
+    })
+    if (already) {
+      throw new Error('Esta falta/cancelamento já possui reposição marcada')
+    }
+    return coversSessionId
+  }
+
   if (remaining <= 0) {
     throw new Error(
       missed === 0
@@ -199,6 +257,7 @@ async function assertMakeupAllowed(studentId: string) {
         : `Limite de reposições do contrato atingido (${used}/${missed}). Só é possível repor aulas fixas com falta ou cancelamento.`,
     )
   }
+  return null
 }
 
 async function assertMakeupPlacement(input: {
@@ -219,8 +278,13 @@ async function assertMakeupPlacement(input: {
     )
   }
 
+  const date = parseIsoDate(input.dateIso)
   const fixedSlots = await prisma.scheduleSlot.findMany({
-    where: { studentId: input.studentId },
+    where: {
+      studentId: input.studentId,
+      validFrom: { lte: date },
+      OR: [{ validTo: null }, { validTo: { gte: date } }],
+    },
     select: { weekday: true, time: true },
   })
   const conflictsFixed = fixedSlots.some(
@@ -305,6 +369,7 @@ export async function updateSessionRecord(
     notes?: string | null
     date?: string
     time?: string
+    coversSessionId?: string | null
   },
 ) {
   const existing = await prisma.classSession.findUnique({ where: { id } })
@@ -338,6 +403,9 @@ export async function updateSessionRecord(
       ...(input.time !== undefined ? { time: nextTime } : {}),
       ...(input.date !== undefined
         ? { weekday: toDbWeekday(weekdayFromIsoDate(nextDateIso)) }
+        : {}),
+      ...(input.coversSessionId !== undefined
+        ? { coversSessionId: input.coversSessionId }
         : {}),
     },
   })

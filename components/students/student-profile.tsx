@@ -72,6 +72,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
@@ -103,6 +112,9 @@ import {
   replaceScheduleSlots,
   replaceStudioHours,
   availableSlotsForWeekday,
+  currentScheduleSlots,
+  scheduleSlotKey,
+  toIsoDate,
   scheduleWithinPlanLimit,
   studentChargedValue,
   studentPaymentStatus,
@@ -173,6 +185,14 @@ export function StudentProfile({ student: initial }: { student: Student }) {
   const [assessmentIndex, setAssessmentIndex] = useState(0)
   const [evolutionIndex, setEvolutionIndex] = useState(0)
   const [scheduleTick, setScheduleTick] = useState(0)
+  const [draftSchedule, setDraftSchedule] = useState<
+    Pick<ScheduleSlot, 'weekday' | 'time'>[] | null
+  >(null)
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
+  const [scheduleEffectiveFrom, setScheduleEffectiveFrom] = useState(() =>
+    toIsoDate(new Date()),
+  )
+  const [savingSchedule, setSavingSchedule] = useState(false)
 
   useEffect(() => {
     upsertStudentInStore(initial)
@@ -301,8 +321,27 @@ export function StudentProfile({ student: initial }: { student: Student }) {
     return `${months} ${months === 1 ? 'mês' : 'meses'} · ${total} aulas`
   }, [governingContract, plans, student.schedule])
 
-  /** Agenda exibida: só com contrato assinado. */
-  const displaySchedule = hasSignedContract ? student.schedule : []
+  /** Agenda vigente hoje (para edição). Histórico usa student.schedule completo. */
+  const displaySchedule = useMemo(
+    () =>
+      hasSignedContract ? currentScheduleSlots(student.schedule) : [],
+    [hasSignedContract, student.schedule],
+  )
+
+  const editingSchedule = draftSchedule ?? displaySchedule.map((s) => ({
+    weekday: s.weekday,
+    time: s.time,
+  }))
+
+  const scheduleDirty = useMemo(() => {
+    if (!draftSchedule) return false
+    const currentKeys = displaySchedule
+      .map(scheduleSlotKey)
+      .sort()
+      .join(',')
+    const draftKeys = draftSchedule.map(scheduleSlotKey).sort().join(',')
+    return currentKeys !== draftKeys
+  }, [draftSchedule, displaySchedule])
 
   const sortedAssessments = useMemo(
     () =>
@@ -576,7 +615,10 @@ export function StudentProfile({ student: initial }: { student: Student }) {
       return
     }
     const limit = effectiveWeeklyLimit
-    if (student.schedule.length >= limit) {
+    const base =
+      draftSchedule ??
+      displaySchedule.map((s) => ({ weekday: s.weekday, time: s.time }))
+    if (base.length >= limit) {
       toast.error('Limite do plano atingido', {
         description: `O plano permite no máximo ${limit} aula(s) fixa(s) por semana. Use a seção de frequência abaixo para marcar reposição.`,
       })
@@ -590,29 +632,91 @@ export function StudentProfile({ student: initial }: { student: Student }) {
       toast.error('Horário fora do funcionamento do estúdio')
       return
     }
-    const exists = student.schedule.some(
+    const exists = base.some(
       (s) => s.weekday === slotWeekday && s.time === slotTime,
     )
     if (exists) {
       toast.error('Este horário já está na agenda do aluno')
       return
     }
-    const next: ScheduleSlot = { weekday: slotWeekday, time: slotTime }
-    syncStudent({
-      schedule: [...student.schedule, next].sort((a, b) =>
+    const next = { weekday: slotWeekday, time: slotTime }
+    setDraftSchedule(
+      [...base, next].sort((a, b) =>
         `${a.weekday}${a.time}`.localeCompare(`${b.weekday}${b.time}`),
       ),
-    })
-    toast.success('Horário fixo adicionado')
+    )
   }
 
-  function removeScheduleSlot(slot: ScheduleSlot) {
-    syncStudent({
-      schedule: student.schedule.filter(
+  function removeScheduleSlot(slot: Pick<ScheduleSlot, 'weekday' | 'time'>) {
+    const base =
+      draftSchedule ??
+      displaySchedule.map((s) => ({ weekday: s.weekday, time: s.time }))
+    setDraftSchedule(
+      base.filter(
         (s) => !(s.weekday === slot.weekday && s.time === slot.time),
       ),
-    })
-    toast.success('Horário removido')
+    )
+  }
+
+  function openScheduleApplyDialog() {
+    if (!scheduleDirty || !draftSchedule) return
+    if (
+      effectiveWeeklyLimit != null &&
+      draftSchedule.length > 0 &&
+      draftSchedule.length < effectiveWeeklyLimit
+    ) {
+      toast.error('Agenda incompleta', {
+        description: `O plano exige ${effectiveWeeklyLimit} horário(s) por semana.`,
+      })
+      return
+    }
+    const minDate = governingContract?.startDate ?? student.since
+    const maxDate = governingContract?.endDate
+    const today = toIsoDate(new Date())
+    let initial = today
+    if (initial < minDate) initial = minDate
+    if (maxDate && initial > maxDate) initial = maxDate
+    setScheduleEffectiveFrom(initial)
+    setScheduleDialogOpen(true)
+  }
+
+  async function confirmScheduleChange() {
+    if (!draftSchedule) return
+    const minDate = governingContract?.startDate ?? student.since
+    const maxDate = governingContract?.endDate
+    if (scheduleEffectiveFrom < minDate) {
+      toast.error('Data anterior ao início do contrato')
+      return
+    }
+    if (maxDate && scheduleEffectiveFrom > maxDate) {
+      toast.error('Data posterior ao fim do contrato')
+      return
+    }
+    setSavingSchedule(true)
+    try {
+      const updated = await updateStudent(student.id, {
+        schedule: draftSchedule.map((s) => ({
+          weekday: s.weekday,
+          time: s.time,
+        })),
+        scheduleEffectiveFrom,
+      })
+      setStudent(updated)
+      patchStudent(student.id, updated) || upsertStudentInStore(updated)
+      setDraftSchedule(null)
+      setScheduleDialogOpen(false)
+      toast.success('Agenda atualizada', {
+        description: `Nova grade a partir de ${formatShortDate(scheduleEffectiveFrom)}. Aulas anteriores mantêm a grade antiga.`,
+      })
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível atualizar a agenda',
+      )
+    } finally {
+      setSavingSchedule(false)
+    }
   }
 
   const assessmentSeries = [...student.assessments]
@@ -1522,8 +1626,8 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                         governingContract?.planLabel ||
                         planName(effectivePlanId)
                       } (${contractSourceLabel}) · ${
-                        displaySchedule.length
-                      }/${effectiveWeeklyLimit ?? '—'} horário(s) na semana. Reposições ficam na seção de frequência abaixo.`
+                        editingSchedule.length
+                      }/${effectiveWeeklyLimit ?? '—'} horário(s) na semana. Alterações valem a partir de uma data — o histórico anterior não muda.`
                     : 'Disponível após assinatura de um contrato. Sem contrato ativo a agenda fica vazia.'}
                 </CardDescription>
               </CardHeader>
@@ -1607,7 +1711,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                         onClick={addScheduleSlot}
                         disabled={
                           effectiveWeeklyLimit == null ||
-                          displaySchedule.length >= effectiveWeeklyLimit ||
+                          editingSchedule.length >= effectiveWeeklyLimit ||
                           scheduleSlotOptions.length === 0
                         }
                       >
@@ -1617,14 +1721,38 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                     </div>
 
                     {effectiveWeeklyLimit != null &&
-                    displaySchedule.length >= effectiveWeeklyLimit ? (
+                    editingSchedule.length >= effectiveWeeklyLimit ? (
                       <p className="text-xs text-muted-foreground">
                         Limite do plano atingido. Para reposição ou aula extra, use a
                         seção de frequência abaixo.
                       </p>
                     ) : null}
 
-                    {displaySchedule.length === 0 ? (
+                    {scheduleDirty ? (
+                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                        <p className="flex-1 text-sm text-muted-foreground">
+                          Grade alterada (rascunho). Escolha a data de vigência para
+                          aplicar sem reescrever o histórico passado.
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDraftSchedule(null)}
+                        >
+                          Descartar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={openScheduleApplyDialog}
+                        >
+                          Aplicar alteração
+                        </Button>
+                      </div>
+                    ) : null}
+
+                    {editingSchedule.length === 0 ? (
                       <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
                         Nenhum horário fixo
                         {effectiveWeeklyLimit != null
@@ -1635,18 +1763,23 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                       <div className="flex flex-col gap-3 rounded-xl border p-4">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <p className="text-sm font-medium">Horários ativos</p>
+                            <p className="text-sm font-medium">
+                              {scheduleDirty
+                                ? 'Nova grade (rascunho)'
+                                : 'Horários ativos'}
+                            </p>
                             <p className="text-xs text-muted-foreground">
-                              Remova um horário para trocar a grade fixa do aluno.
+                              Remova ou adicione horários e depois aplique a
+                              alteração a partir de uma data.
                             </p>
                           </div>
                           <Badge variant="secondary">
-                            {displaySchedule.length} cadastrado(s)
+                            {editingSchedule.length} cadastrado(s)
                           </Badge>
                         </div>
                         <Separator />
                         <div className="flex flex-wrap gap-2">
-                          {displaySchedule.map((slot) => (
+                          {editingSchedule.map((slot) => (
                             <Badge
                               key={slot.weekday + slot.time}
                               variant="outline"
@@ -1672,10 +1805,69 @@ export function StudentProfile({ student: initial }: { student: Student }) {
               </CardContent>
             </Card>
 
+            <Dialog
+              open={scheduleDialogOpen}
+              onOpenChange={setScheduleDialogOpen}
+            >
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Alterar agenda fixa</DialogTitle>
+                  <DialogDescription>
+                    Aulas antes dessa data mantêm a grade anterior. A nova grade
+                    vale a partir da data escolhida.
+                  </DialogDescription>
+                </DialogHeader>
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="schedule-effective-from">
+                      Válido a partir de
+                    </FieldLabel>
+                    <Input
+                      id="schedule-effective-from"
+                      type="date"
+                      min={governingContract?.startDate ?? student.since}
+                      max={governingContract?.endDate}
+                      value={scheduleEffectiveFrom}
+                      onChange={(e) =>
+                        setScheduleEffectiveFrom(e.target.value)
+                      }
+                    />
+                  </Field>
+                  <div className="rounded-lg border px-3 py-2 text-sm">
+                    <p className="font-medium">Nova grade</p>
+                    <p className="text-muted-foreground">
+                      {draftSchedule && draftSchedule.length > 0
+                        ? draftSchedule
+                            .map((s) => `${s.weekday} ${s.time}`)
+                            .join(' · ')
+                        : 'Nenhum horário'}
+                    </p>
+                  </div>
+                </FieldGroup>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setScheduleDialogOpen(false)}
+                    disabled={savingSchedule}
+                  >
+                    Voltar
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => void confirmScheduleChange()}
+                    disabled={savingSchedule}
+                  >
+                    {savingSchedule ? 'Salvando…' : 'Confirmar alteração'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
             {hasSignedContract ? (
             <StudentAttendancePanel
               studentId={student.id}
-              schedule={displaySchedule}
+              schedule={student.schedule}
               planId={effectivePlanId}
               fallbackPlanId={effectivePlanId}
               historyFrom={governingContract!.startDate}

@@ -23,6 +23,7 @@ const createSessionSchema = z.object({
   notes: z.string().optional(),
   professionalId: z.string().optional(),
   guestName: z.string().optional(),
+  coversSessionId: z.string().min(1).optional(),
 })
 
 export async function GET(request: NextRequest, context: RouteContext) {
@@ -60,7 +61,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
           error.message.includes('reposições') ||
           error.message.includes('vigência') ||
           error.message.includes('agenda fixa') ||
-          error.message.includes('aula fixa'))
+          error.message.includes('aula fixa') ||
+          error.message.includes('falta/cancelamento') ||
+          error.message.includes('origem'))
       ) {
         return jsonError(
           error.message,

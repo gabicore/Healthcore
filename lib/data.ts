@@ -218,6 +218,11 @@ export type Expense = {
 export type ScheduleSlot = {
   weekday: Weekday
   time: string
+  /** Início da vigência (ISO date). Ausente em dados legados/mock = sempre válido. */
+  validFrom?: string
+  /** Fim da vigência (ISO date). Null/ausente = ainda vigente. */
+  validTo?: string | null
+  id?: string
 }
 
 export type Student = {
@@ -2295,12 +2300,11 @@ export function contractTotalClasses(input: {
   }
 
   const schedule = input.schedule ?? []
-  const limited = scheduleWithinPlanLimit(schedule, frequency)
 
-  if (limited.length > 0) {
+  if (schedule.length > 0) {
     return buildFixedSessionsForSchedule({
       studentId: '_contract-count',
-      schedule: limited,
+      schedule,
       weeklyLimit: frequency,
       fromDate: input.startDate,
       toDate: input.endDate,
@@ -2320,6 +2324,37 @@ export function scheduleWithinPlanLimit(
       : planWeeklyLimit(planIdOrFrequency)
   if (schedule.length <= limit) return schedule
   return schedule.slice(0, limit)
+}
+
+/** Slot ativo em uma data (vigência da grade). */
+export function isScheduleSlotActiveOn(
+  slot: ScheduleSlot,
+  dateIso: string,
+): boolean {
+  if (slot.validFrom && dateIso < slot.validFrom) return false
+  if (slot.validTo && dateIso > slot.validTo) return false
+  return true
+}
+
+/** Padrão semanal vigente em uma data (todos os slots ativos naquele dia). */
+export function scheduleSlotsOnDate(
+  schedule: ScheduleSlot[],
+  dateIso: string,
+): ScheduleSlot[] {
+  return schedule.filter((slot) => isScheduleSlotActiveOn(slot, dateIso))
+}
+
+/** Grade atual do aluno (slots vigentes em `asOfIso`, default hoje). */
+export function currentScheduleSlots(
+  schedule: ScheduleSlot[],
+  asOfIso = toIsoDate(new Date()),
+): ScheduleSlot[] {
+  return scheduleSlotsOnDate(schedule, asOfIso)
+}
+
+/** Chave weekday+time para comparar padrões de grade. */
+export function scheduleSlotKey(slot: Pick<ScheduleSlot, 'weekday' | 'time'>) {
+  return `${slot.weekday}|${slot.time}`
 }
 
 /** Atualiza o aluno no store em memória (MVP sem banco). */
@@ -2796,6 +2831,8 @@ export type ClassSession = {
   guestName?: string
   professionalId?: string
   notes?: string
+  /** Reposição: id da aula fixa (falta/cancelada) coberta. */
+  coversSessionId?: string
 }
 
 export const classSessionTypeLabel: Record<ClassSessionType, string> = {
@@ -2919,7 +2956,7 @@ export function buildWeekSessions(monday: Date, today = new Date()): ClassSessio
     if (!student.active) continue
     // Respeita o limite do plano mesmo se houver dados inconsistentes.
     const limitedSchedule = scheduleWithinPlanLimit(
-      student.schedule,
+      currentScheduleSlots(student.schedule),
       student.planId,
     )
     for (const slot of limitedSchedule) {
@@ -3213,11 +3250,9 @@ export function getStudentAttendanceHistory(
     return []
   }
 
-  // Sem agenda completa (todos os horários do plano) não gera histórico.
+  // Sem nenhum slot versionado não gera histórico.
+  // Períodos com padrão incompleto (< weeklyLimit) são pulados em buildFixedSessionsForSchedule.
   if (schedule.length === 0) {
-    return []
-  }
-  if (weeklyLimit != null && schedule.length < weeklyLimit) {
     return []
   }
 
@@ -3250,6 +3285,7 @@ export function getStudentAttendanceHistory(
           status: record.status,
           notes: record.notes,
           professionalId: record.professionalId,
+          coversSessionId: record.coversSessionId,
         })
       } else {
         byKey.set(key, record)
@@ -3303,7 +3339,7 @@ export type StudentAttendanceHistoryOptions = {
   today?: Date
 }
 
-/** Gera aulas fixas de um aluno entre duas datas, a partir da agenda semanal. */
+/** Gera aulas fixas de um aluno entre duas datas, a partir da agenda semanal (com vigência). */
 export function buildFixedSessionsForSchedule(input: {
   studentId: string
   schedule: ScheduleSlot[]
@@ -3322,12 +3358,12 @@ export function buildFixedSessionsForSchedule(input: {
     return []
   }
 
-  const limited =
+  const weeklyLimit =
     input.weeklyLimit != null
-      ? scheduleWithinPlanLimit(input.schedule, input.weeklyLimit)
+      ? input.weeklyLimit
       : input.planId
-        ? scheduleWithinPlanLimit(input.schedule, input.planId)
-        : input.schedule
+        ? planWeeklyLimit(input.planId)
+        : null
 
   const sessions: ClassSession[] = []
   let cursor = getMonday(from)
@@ -3335,21 +3371,28 @@ export function buildFixedSessionsForSchedule(input: {
 
   while (cursor <= lastMonday) {
     const columns = getWeekColumns(cursor)
-    for (const slot of limited) {
-      const column = columns.find((c) => c.weekday === slot.weekday)
-      if (!column) continue
+    for (const column of columns) {
       if (column.iso < input.fromDate || column.iso > input.toDate) continue
-      const allowed = availableSlotsForWeekday(slot.weekday)
-      if (!allowed.includes(slot.time)) continue
-      sessions.push({
-        id: `${input.studentId}-${column.iso}-${slot.time}`,
-        studentId: input.studentId,
-        date: column.iso,
-        weekday: slot.weekday,
-        time: slot.time,
-        status: demoStatusForSession(input.studentId, column.iso, todayIso),
-        type: 'fixa',
-      })
+
+      const pattern = scheduleSlotsOnDate(input.schedule, column.iso)
+      if (pattern.length === 0) continue
+      // Só gera quando o padrão vigente naquela data está completo.
+      if (weeklyLimit != null && pattern.length < weeklyLimit) continue
+
+      const daySlots = pattern.filter((slot) => slot.weekday === column.weekday)
+      for (const slot of daySlots) {
+        const allowed = availableSlotsForWeekday(slot.weekday)
+        if (!allowed.includes(slot.time)) continue
+        sessions.push({
+          id: `${input.studentId}-${column.iso}-${slot.time}`,
+          studentId: input.studentId,
+          date: column.iso,
+          weekday: slot.weekday,
+          time: slot.time,
+          status: demoStatusForSession(input.studentId, column.iso, todayIso),
+          type: 'fixa',
+        })
+      }
     }
     cursor = addDays(cursor, 7)
   }
@@ -3383,8 +3426,8 @@ export function getAttendanceStats(sessions: ClassSession[], today = new Date())
 }
 
 /**
- * Reposições permitidas = aulas fixas com falta/cancelamento − reposições ativas.
- * Opcionalmente limitado à vigência do contrato atual.
+ * Reposições permitidas = aulas fixas com falta/cancelamento sem reposição ativa vinculada.
+ * Legado sem coversSessionId: cobre por FIFO.
  */
 export function getMakeupAllowance(
   sessions: ClassSession[],
@@ -3408,12 +3451,45 @@ export function getMakeupAllowance(
     .filter((s) => s.type === 'reposicao' && s.status !== 'cancelada')
     .slice()
     .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+
+  const byId = new Map(scoped.map((s) => [s.id, s]))
+  const linkedCoveredIds = new Set(
+    usedSessions
+      .map((s) => s.coversSessionId)
+      .filter((id): id is string => Boolean(id)),
+  )
+  const linkedMakeups = usedSessions.filter((s) => s.coversSessionId)
+  const unlinkedMakeups = usedSessions.filter((s) => !s.coversSessionId)
+
+  const uncovered = missedSessions.filter((s) => !linkedCoveredIds.has(s.id))
+  const pendingMissed = uncovered.slice(unlinkedMakeups.length)
+  const coveredByFifo = uncovered.slice(0, unlinkedMakeups.length)
+  const coveredMissed = [
+    ...missedSessions.filter((s) => linkedCoveredIds.has(s.id)),
+    ...coveredByFifo,
+  ]
+
+  const makeupByCoveredId = new Map<string, ClassSession>()
+  for (const makeup of linkedMakeups) {
+    if (makeup.coversSessionId) {
+      makeupByCoveredId.set(makeup.coversSessionId, makeup)
+    }
+  }
+  // FIFO pairing for legacy unlinked makeups
+  unlinkedMakeups.forEach((makeup, index) => {
+    const missed = coveredByFifo[index]
+    if (missed) makeupByCoveredId.set(missed.id, makeup)
+  })
+
+  const coveredSessionByMakeupId = new Map<string, ClassSession>()
+  for (const [missedId, makeup] of makeupByCoveredId) {
+    const missed = byId.get(missedId)
+    if (missed) coveredSessionByMakeupId.set(makeup.id, missed)
+  }
+
   const missed = missedSessions.length
   const used = usedSessions.length
-  const remaining = Math.max(0, missed - used)
-  // FIFO: as primeiras faltas/cancelamentos são cobertas pelas reposições.
-  const pendingMissed = missedSessions.slice(used)
-  const coveredMissed = missedSessions.slice(0, used)
+  const remaining = pendingMissed.length
 
   return {
     missed,
@@ -3422,6 +3498,8 @@ export function getMakeupAllowance(
     pendingMissed,
     coveredMissed,
     makeups: usedSessions,
+    makeupByCoveredId,
+    coveredSessionByMakeupId,
   }
 }
 

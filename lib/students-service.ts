@@ -4,6 +4,8 @@ import {
   parseIsoDate,
   toDbPaymentMethod,
   toDbWeekday,
+  toIsoDateOnly,
+  fromDbWeekday,
 } from '@/lib/db-mappers'
 import { DEFAULT_STUDIO_ID } from '@/lib/constants'
 import {
@@ -20,6 +22,71 @@ import type {
   CreateStudentInput,
   UpdateStudentInput,
 } from '@/lib/validations/student'
+
+function addUtcDays(date: Date, days: number) {
+  const next = new Date(date.getTime())
+  next.setUTCDate(next.getUTCDate() + days)
+  return next
+}
+
+function slotKey(weekday: Weekday, time: string) {
+  return `${weekday}|${time}`
+}
+
+/**
+ * Aplica nova grade a partir de `effectiveFrom` sem reescrever o passado:
+ * fecha slots abertos removidos e cria os novos.
+ */
+async function applyScheduleVersion(
+  studentId: string,
+  nextSchedule: { weekday: Weekday; time: string }[],
+  effectiveFromIso: string,
+) {
+  const effectiveFrom = parseIsoDate(effectiveFromIso)
+  const dayBefore = addUtcDays(effectiveFrom, -1)
+  const dayBeforeIso = toIsoDateOnly(dayBefore)
+
+  const openSlots = await prisma.scheduleSlot.findMany({
+    where: { studentId, validTo: null },
+  })
+
+  const nextKeys = new Set(
+    nextSchedule.map((s) => slotKey(s.weekday, s.time)),
+  )
+  const openByKey = new Map(
+    openSlots.map((s) => [
+      slotKey(fromDbWeekday(s.weekday), s.time),
+      s,
+    ]),
+  )
+
+  for (const [key, slot] of openByKey) {
+    if (nextKeys.has(key)) continue
+    const fromIso = toIsoDateOnly(slot.validFrom)
+    if (fromIso >= effectiveFromIso || dayBeforeIso < fromIso) {
+      await prisma.scheduleSlot.delete({ where: { id: slot.id } })
+    } else {
+      await prisma.scheduleSlot.update({
+        where: { id: slot.id },
+        data: { validTo: dayBefore },
+      })
+    }
+  }
+
+  for (const slot of nextSchedule) {
+    const key = slotKey(slot.weekday, slot.time)
+    if (openByKey.has(key)) continue
+    await prisma.scheduleSlot.create({
+      data: {
+        studentId,
+        weekday: toDbWeekday(slot.weekday),
+        time: slot.time,
+        validFrom: effectiveFrom,
+        validTo: null,
+      },
+    })
+  }
+}
 
 async function assertScheduleFitsStudioHours(
   schedule: { weekday: Weekday; time: string }[],
@@ -121,6 +188,8 @@ export async function createStudentRecord(input: CreateStudentInput) {
     )
   }
 
+  const sinceIso =
+    input.since ?? new Date().toISOString().slice(0, 10)
   const discount = input.discountPercent ?? 0
   const monthlyValue =
     input.monthlyValue ?? priceWithDiscount(Number(plan.price), discount)
@@ -138,9 +207,7 @@ export async function createStudentRecord(input: CreateStudentInput) {
       address: input.address ?? '',
       emergencyContact: input.emergencyContact ?? '',
       active: input.active ?? true,
-      since: parseIsoDate(
-        input.since ?? new Date().toISOString().slice(0, 10),
-      ),
+      since: parseIsoDate(sinceIso),
       objective: input.objective ?? '',
       pathologies: input.pathologies ?? '',
       injuries: input.injuries ?? '',
@@ -157,6 +224,8 @@ export async function createStudentRecord(input: CreateStudentInput) {
         create: (input.schedule ?? []).map((slot) => ({
           weekday: toDbWeekday(slot.weekday),
           time: slot.time,
+          validFrom: parseIsoDate(sinceIso),
+          validTo: null,
         })),
       },
     },
@@ -221,7 +290,10 @@ export async function updateStudentRecord(
   if (input.schedule !== undefined) {
     await assertScheduleFitsStudioHours(input.schedule)
     await assertScheduleFitsPlanFrequency(id, input.schedule, planId)
-    await prisma.scheduleSlot.deleteMany({ where: { studentId: id } })
+    const effectiveFrom =
+      input.scheduleEffectiveFrom ??
+      new Date().toISOString().slice(0, 10)
+    await applyScheduleVersion(id, input.schedule, effectiveFrom)
   }
 
   const updated = await prisma.student.update({
@@ -263,16 +335,6 @@ export async function updateStudentRecord(
       ...(input.dueDay !== undefined ? { dueDay: input.dueDay } : {}),
       ...(input.paymentMethod !== undefined
         ? { paymentMethod: toDbPaymentMethod(input.paymentMethod) }
-        : {}),
-      ...(input.schedule !== undefined
-        ? {
-            schedule: {
-              create: input.schedule.map((slot) => ({
-                weekday: toDbWeekday(slot.weekday),
-                time: slot.time,
-              })),
-            },
-          }
         : {}),
     },
     include: studentDetailInclude,

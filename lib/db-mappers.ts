@@ -57,7 +57,14 @@ export function parseIsoDate(iso: string): Date {
   return new Date(Date.UTC(y, m - 1, d))
 }
 
-export function toIsoDateOnly(date: Date): string {
+export function toIsoDateOnly(date: Date | string | null | undefined): string {
+  if (date == null) return '1970-01-01'
+  if (typeof date === 'string') {
+    return date.slice(0, 10)
+  }
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return '1970-01-01'
+  }
   return date.toISOString().slice(0, 10)
 }
 

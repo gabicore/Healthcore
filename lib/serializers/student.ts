@@ -30,10 +30,19 @@ type StudentWithRelations = DbStudent & {
 }
 
 export function serializeSchedule(slots: DbSchedule[] = []): ScheduleSlot[] {
-  return slots.map((slot) => ({
-    weekday: fromDbWeekday(slot.weekday),
-    time: slot.time,
-  }))
+  return slots.map((slot) => {
+    const validFrom =
+      slot.validFrom != null
+        ? toIsoDateOnly(slot.validFrom)
+        : '1970-01-01'
+    return {
+      id: slot.id,
+      weekday: fromDbWeekday(slot.weekday),
+      time: slot.time,
+      validFrom,
+      validTo: slot.validTo ? toIsoDateOnly(slot.validTo) : null,
+    }
+  })
 }
 
 export function serializePayments(payments: DbPayment[] = []): Payment[] {

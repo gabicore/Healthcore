@@ -26,6 +26,7 @@ export async function createStudentSession(
     status?: ClassSession['status']
     notes?: string
     professionalId?: string
+    coversSessionId?: string
   },
 ): Promise<ClassSession> {
   const response = await fetch(`/api/alunos/${studentId}/aulas`, {

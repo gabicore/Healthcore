@@ -491,6 +491,8 @@ export async function emailContractRecord(id: string) {
         schedule: scheduleRows.map((s) => ({
           weekday: fromDbWeekday(s.weekday),
           time: s.time,
+          validFrom: toIsoDateOnly(s.validFrom),
+          validTo: s.validTo ? toIsoDateOnly(s.validTo) : null,
         })),
         planId: plan.id,
       })

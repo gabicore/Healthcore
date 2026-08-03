@@ -35,6 +35,7 @@ import {
   plans,
   studentChargedValue,
   availableSlotsForWeekday,
+  currentScheduleSlots,
   replaceStudioHours,
   weekdays,
   type PaymentMethod,
@@ -111,7 +112,10 @@ function toEditable(student: Student): EditableStudent {
     discountPercent: student.discountPercent ?? 0,
     dueDay: student.dueDay,
     paymentMethod: student.paymentMethod,
-    schedule: student.schedule.map((s) => ({ ...s })),
+    schedule: currentScheduleSlots(student.schedule).map((s) => ({
+      weekday: s.weekday,
+      time: s.time,
+    })),
   }
 }
 

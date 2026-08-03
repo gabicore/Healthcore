@@ -83,6 +83,11 @@ export const updateStudentSchema = z.object({
   dueDay: z.number().int().min(1).max(28).optional(),
   paymentMethod: paymentMethodSchema.optional(),
   schedule: z.array(scheduleSlotSchema).optional(),
+  /** Data a partir da qual a nova grade vale (ISO). Obrigatória ao alterar schedule. */
+  scheduleEffectiveFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 })
 
 export type CreateStudentInput = z.input<typeof createStudentSchema>

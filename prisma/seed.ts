@@ -150,6 +150,8 @@ async function main() {
           create: student.schedule.map((slot) => ({
             weekday: toDbWeekday(slot.weekday),
             time: slot.time,
+            validFrom: parseIsoDate(student.since),
+            validTo: null,
           })),
         },
         payments: {

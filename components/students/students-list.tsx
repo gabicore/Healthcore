@@ -9,12 +9,13 @@ import {
   ArrowUpAZ,
   ChevronRight,
   Search,
-  UserCheck,
-  Users,
+  Trash2,
 } from 'lucide-react'
 
+import { DeleteStudentDialog } from '@/components/students/delete-student-dialog'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import {
   InputGroup,
   InputGroupAddon,
@@ -62,6 +63,14 @@ const paymentRank: Record<PaymentStatus, number> = {
   pago: 2,
 }
 
+function studentPlanLabel(
+  student: Student,
+  planName: (id: string) => string,
+): string {
+  if (!student.hasActiveContract) return '—'
+  return student.activePlanLabel?.trim() || planName(student.planId)
+}
+
 function compareStudents(
   a: Student,
   b: Student,
@@ -72,20 +81,26 @@ function compareStudents(
     case 'name':
       return a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })
     case 'plan':
-      return planName(a.planId).localeCompare(planName(b.planId), 'pt-BR', {
-        sensitivity: 'base',
-      })
+      return studentPlanLabel(a, planName).localeCompare(
+        studentPlanLabel(b, planName),
+        'pt-BR',
+        { sensitivity: 'base' },
+      )
     case 'nextClass':
       return nextClass(a).localeCompare(nextClass(b), 'pt-BR', {
         sensitivity: 'base',
       })
     case 'active':
-      return Number(b.active) - Number(a.active)
-    case 'payment':
-      return (
-        paymentRank[studentPaymentStatus(a)] -
-        paymentRank[studentPaymentStatus(b)]
-      )
+      return Number(b.hasActiveContract) - Number(a.hasActiveContract)
+    case 'payment': {
+      const rankA = a.hasActiveContract
+        ? paymentRank[studentPaymentStatus(a)]
+        : 3
+      const rankB = b.hasActiveContract
+        ? paymentRank[studentPaymentStatus(b)]
+        : 3
+      return rankA - rankB
+    }
   }
 }
 
@@ -155,6 +170,10 @@ export function StudentsList() {
   const [filter, setFilter] = useState<Filter>('todos')
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string
+    name: string
+  } | null>(null)
 
   const planName = useMemo(() => {
     const map = new Map(plans.map((p) => [p.id, p.name]))
@@ -196,8 +215,8 @@ export function StudentsList() {
         s.email.toLowerCase().includes(query.toLowerCase())
       const matchesFilter =
         filter === 'todos' ||
-        (filter === 'ativos' && s.active) ||
-        (filter === 'inativos' && !s.active)
+        (filter === 'ativos' && s.hasActiveContract) ||
+        (filter === 'inativos' && !s.hasActiveContract)
       return matchesQuery && matchesFilter
     })
 
@@ -217,52 +236,8 @@ export function StudentsList() {
     setSortDir('asc')
   }
 
-  const totalStudents = students.length
-  const activeStudents = students.filter((s) => s.active).length
-
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card>
-          <CardContent className="flex items-start justify-between gap-3 pt-6">
-            <div className="flex flex-col gap-1">
-              <span className="text-sm text-muted-foreground">
-                Total de alunos
-              </span>
-              <span className="text-2xl font-semibold tracking-tight">
-                {loading ? '—' : totalStudents}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Cadastrados na plataforma
-              </span>
-            </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
-              <Users className="size-5" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-start justify-between gap-3 pt-6">
-            <div className="flex flex-col gap-1">
-              <span className="text-sm text-muted-foreground">
-                Alunos ativos
-              </span>
-              <span className="text-2xl font-semibold tracking-tight">
-                {loading ? '—' : activeStudents}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {loading
-                  ? '…'
-                  : `${totalStudents - activeStudents} inativo(s)`}
-              </span>
-            </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
-              <UserCheck className="size-5" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <InputGroup className="sm:max-w-xs">
           <InputGroupAddon>
@@ -373,19 +348,39 @@ export function StudentsList() {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-muted-foreground">
-                      {planName(s.planId)}
+                      {studentPlanLabel(s, planName)}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-muted-foreground">
-                      {nextClass(s)}
+                      {s.hasActiveContract ? nextClass(s) : '—'}
                     </TableCell>
                     <TableCell>
-                      <ActiveBadge active={s.active} />
+                      <ActiveBadge active={s.hasActiveContract} />
                     </TableCell>
                     <TableCell>
-                      <PaymentBadge status={studentPaymentStatus(s)} />
+                      {s.hasActiveContract ? (
+                        <PaymentBadge status={studentPaymentStatus(s)} />
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
-                      <ChevronRight className="size-4 text-muted-foreground" />
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-muted-foreground hover:text-destructive"
+                          title="Excluir aluno"
+                          aria-label={`Excluir ${s.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeleteTarget({ id: s.id, name: s.name })
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                        <ChevronRight className="size-4 text-muted-foreground" />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -404,6 +399,20 @@ export function StudentsList() {
           </>
         )}
       </Card>
+
+      <DeleteStudentDialog
+        open={Boolean(deleteTarget)}
+        studentId={deleteTarget?.id ?? ''}
+        studentName={deleteTarget?.name ?? ''}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+        onDeleted={() => {
+          const id = deleteTarget?.id
+          if (id) setStudents((prev) => prev.filter((s) => s.id !== id))
+          setDeleteTarget(null)
+        }}
+      />
     </div>
   )
 }

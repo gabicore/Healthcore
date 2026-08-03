@@ -1,11 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowUpRight,
   CalendarClock,
-  FlaskConical,
   NotebookPen,
   Users,
   Wallet,
@@ -34,7 +33,6 @@ import {
   formatShortDate,
   formatWeekdayLabel,
   getDayExperimentalSessions,
-  getDayLatestEvolutions,
   getDaySessions,
   getStudent,
   getWeekdayFromDate,
@@ -42,41 +40,32 @@ import {
   sessionParticipantName,
   toIsoDate,
   upsertAttendanceSession,
+  replaceStudentsInStore,
   type ClassSession,
 } from '@/lib/data'
-
-function StatCard({
-  title,
-  value,
-  hint,
-  icon: Icon,
-}: {
-  title: string
-  value: string
-  hint: string
-  icon: React.ComponentType<{ className?: string }>
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-start justify-between gap-3 pt-6">
-        <div className="flex flex-col gap-1">
-          <span className="text-sm text-muted-foreground">{title}</span>
-          <span className="text-2xl font-semibold tracking-tight">{value}</span>
-          <span className="text-xs text-muted-foreground">{hint}</span>
-        </div>
-        <div className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
-          <Icon className="size-5" />
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
+import { fetchStudents } from '@/lib/students-api'
 
 export default function DashboardPage() {
   const today = useMemo(() => new Date(), [])
   const todayIso = toIsoDate(today)
   const todayWeekday = getWeekdayFromDate(today)
   const [agendaTick, setAgendaTick] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchStudents({ active: true })
+      .then((list) => {
+        if (cancelled) return
+        replaceStudentsInStore(list)
+        setAgendaTick((n) => n + 1)
+      })
+      .catch(() => {
+        /* mantém store em memória */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const pendingPayments = students.flatMap((s) =>
     s.payments
@@ -98,7 +87,38 @@ export default function DashboardPage() {
     return getDayExperimentalSessions(today)
   }, [today, agendaTick])
 
-  const dayEvolutions = useMemo(() => getDayLatestEvolutions(today), [today])
+  /** Horários únicos com aula no dia (ordenados). */
+  const todaySlots = useMemo(
+    () =>
+      [...new Set(todayAgenda.map((s) => s.time))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [todayAgenda],
+  )
+
+  /** Mesma ordem/alunos da agenda do dia (1 entrada por aluno). */
+  const dayEvolutions = useMemo(() => {
+    const seen = new Set<string>()
+    const rows: {
+      student: NonNullable<ReturnType<typeof getStudent>>
+      evolution: NonNullable<
+        NonNullable<ReturnType<typeof getStudent>>['evolutions']
+      >[number] | null
+      time: string
+    }[] = []
+    for (const session of todayAgenda) {
+      if (!session.studentId || seen.has(session.studentId)) continue
+      const student = getStudent(session.studentId)
+      if (!student) continue
+      seen.add(session.studentId)
+      const evolution =
+        student.evolutions
+          .slice()
+          .sort((a, b) => b.date.localeCompare(a.date))[0] ?? null
+      rows.push({ student, evolution, time: session.time })
+    }
+    return rows
+  }, [todayAgenda])
 
   const dayHint = todayWeekday
     ? formatWeekdayLabel(todayWeekday)
@@ -130,25 +150,52 @@ export default function DashboardPage() {
       </PageHeader>
 
       <div className="flex flex-col gap-6 p-4 md:p-6">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <StatCard
-            title="Aulas hoje"
-            value={String(todayAgenda.length)}
-            hint={`${dayHint} · ${formatShortDate(todayIso)}`}
-            icon={CalendarClock}
-          />
+        <div className="grid grid-cols-1 gap-4">
+          <Card>
+            <CardContent className="flex flex-wrap items-start justify-between gap-6 pt-6">
+              <div className="flex items-start gap-3">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+                  <CalendarClock className="size-5" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm text-muted-foreground">
+                    Aulas hoje
+                  </span>
+                  <span className="text-2xl font-semibold tracking-tight tabular-nums">
+                    {todaySlots.length}
+                  </span>
+                </div>
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-2 sm:items-end">
+                <span className="text-xs text-muted-foreground">
+                  {dayHint} · {formatShortDate(todayIso)}
+                </span>
+                {todaySlots.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 sm:justify-end">
+                    {todaySlots.map((time) => (
+                      <Badge
+                        key={time}
+                        variant="outline"
+                        className="font-mono tabular-nums"
+                      >
+                        {time}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Nenhum horário com aula.
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="grid grid-cols-1 gap-4">
           <Card>
-            <CardHeader className="flex-row items-start justify-between gap-2">
-              <div className="flex flex-col gap-1">
-                <CardTitle>Aulas experimentais</CardTitle>
-                <CardDescription>
-                  Clientes em aula teste · {dayHint}
-                </CardDescription>
-              </div>
-              <FlaskConical className="size-5 shrink-0 text-muted-foreground" />
+            <CardHeader>
+              <CardTitle>Aulas experimentais</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
               {!todayWeekday ? (
@@ -178,10 +225,20 @@ export default function DashboardPage() {
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{name}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">
-                            {session.notes || 'Cliente experimental'}
+                          <p className="truncate text-sm font-medium">
+                            <span className="text-muted-foreground">
+                              {formatShortDate(session.date)}
+                            </span>
+                            <span className="mx-1.5 text-muted-foreground">
+                              ·
+                            </span>
+                            {name}
                           </p>
+                          {session.notes ? (
+                            <p className="truncate text-[11px] text-muted-foreground">
+                              {session.notes}
+                            </p>
+                          ) : null}
                         </div>
                         <AttendanceBadge status={session.status} />
                       </>
@@ -307,20 +364,17 @@ export default function DashboardPage() {
 
           <Card>
             <CardHeader className="flex-row items-center justify-between">
-              <div className="flex flex-col gap-1">
-                <CardTitle>Últimas evoluções</CardTitle>
-                <CardDescription>Alunos da grade de hoje</CardDescription>
-              </div>
+              <CardTitle>Últimas evoluções</CardTitle>
               <NotebookPen className="size-5 text-muted-foreground" />
             </CardHeader>
             <CardContent className="flex flex-col">
               {!todayWeekday ? (
                 <p className="py-4 text-sm text-muted-foreground">
-                  Sem aulas hoje — evoluções aparecem com a grade.
+                  Sem aulas.
                 </p>
               ) : dayEvolutions.length === 0 ? (
                 <p className="py-4 text-sm text-muted-foreground">
-                  Nenhum aluno na grade para hoje.
+                  Nenhum aluno na agenda de hoje.
                 </p>
               ) : (
                 dayEvolutions.map(({ student, evolution, time }, i) => (
@@ -353,7 +407,7 @@ export default function DashboardPage() {
                           </span>
                         ) : (
                           <span className="text-xs text-muted-foreground">
-                            Sem evolução registrada
+                            Sem evolução
                           </span>
                         )}
                       </div>
@@ -365,7 +419,7 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        <AttendanceChart />
+        <AttendanceChart refreshKey={agendaTick} />
 
         <Card>
           <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">

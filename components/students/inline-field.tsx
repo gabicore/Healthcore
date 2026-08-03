@@ -26,6 +26,8 @@ type InlineFieldProps = {
   type?: 'text' | 'email' | 'tel' | 'date' | 'number' | 'textarea' | 'select'
   options?: Option[]
   placeholder?: string
+  /** Formata o valor enquanto digita (CPF, telefone, CEP etc.). */
+  mask?: (value: string) => string
   onSave: (value: string) => void
   className?: string
   valueClassName?: string
@@ -39,6 +41,7 @@ export function InlineField({
   type = 'text',
   options = [],
   placeholder,
+  mask,
   onSave,
   className,
   valueClassName,
@@ -76,8 +79,12 @@ export function InlineField({
   }
 
   function startEdit() {
-    setDraft(value)
+    setDraft(mask ? mask(value) : value)
     setEditing(true)
+  }
+
+  function handleChange(next: string) {
+    setDraft(mask ? mask(next) : next)
   }
 
   const shown = displayValue ?? value
@@ -117,7 +124,7 @@ export function InlineField({
               <Textarea
                 id={fieldId}
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => handleChange(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') {
                     e.preventDefault()
@@ -137,7 +144,7 @@ export function InlineField({
                 id={fieldId}
                 type={type}
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => handleChange(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') {
                     e.preventDefault()
@@ -150,6 +157,7 @@ export function InlineField({
                 }}
                 onBlur={() => commit()}
                 placeholder={placeholder}
+                inputMode={mask ? 'numeric' : undefined}
               />
             )}
             {type !== 'select' ? (

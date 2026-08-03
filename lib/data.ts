@@ -62,6 +62,7 @@ export type PhysicalAssessment = {
   id: string
   date: string
   weight: number
+  /** Altura em centímetros. */
   height: number
   bodyFat?: number
   muscleMass?: number
@@ -229,9 +230,22 @@ export type Student = {
   phone: string
   email: string
   cep: string
+  street: string
+  addressNumber: string
+  neighborhood: string
+  city: string
+  state: string
   address: string
+  emergencyName: string
+  emergencyRelation: string
+  emergencyPhone: string
+  /** Texto composto para contratos/impressão. */
   emergencyContact: string
   active: boolean
+  /** Tem contrato assinado (ativo) governando plano/financeiro/agenda. */
+  hasActiveContract: boolean
+  /** Rótulo do plano do contrato ativo, se houver. */
+  activePlanLabel?: string
   since: string
   // Dados clínicos
   objective: string
@@ -678,7 +692,10 @@ function assessment(
   bodyFat?: number,
   muscleMass?: number,
 ): PhysicalAssessment {
-  return { id, date, weight, height, bodyFat, muscleMass, measures: m }
+  // Dados legados em metros (< 3) passam a cm.
+  const heightCm =
+    height > 0 && height < 3 ? Math.round(height * 1000) / 10 : height
+  return { id, date, weight, height: heightCm, bodyFat, muscleMass, measures: m }
 }
 
 export const students: Student[] = [
@@ -691,9 +708,18 @@ export const students: Student[] = [
     phone: '(11) 99123-4567',
     email: 'ana.souza@email.com',
     cep: '05410-000',
+    street: '',
+    addressNumber: '',
+    neighborhood: '',
+    city: '',
+    state: '',
     address: 'Rua das Acácias, 245 — Pinheiros, São Paulo/SP',
+    emergencyName: 'Marcos Souza',
+    emergencyRelation: 'marido',
+    emergencyPhone: '(11) 99888-1122',
     emergencyContact: 'Marcos Souza (marido) — (11) 99888-1122',
     active: true,
+    hasActiveContract: true,
     since: '2024-02-10',
     objective: 'Fortalecimento do core e alívio de dor lombar crônica.',
     pathologies: 'Hérnia de disco L4-L5, escoliose leve.',
@@ -814,9 +840,18 @@ export const students: Student[] = [
     phone: '(11) 98456-7788',
     email: 'cadu.lima@email.com',
     cep: '01402-000',
+    street: '',
+    addressNumber: '',
+    neighborhood: '',
+    city: '',
+    state: '',
     address: 'Av. Rebouças, 1200 — Jardim Paulista, São Paulo/SP',
+    emergencyName: 'Fernanda Lima',
+    emergencyRelation: 'esposa',
+    emergencyPhone: '(11) 99777-3344',
     emergencyContact: 'Fernanda Lima (esposa) — (11) 99777-3344',
     active: true,
+    hasActiveContract: true,
     since: '2023-08-22',
     objective: 'Reabilitação de joelho pós-cirúrgico e ganho de força.',
     pathologies: 'Condromalácia patelar grau II.',
@@ -888,9 +923,18 @@ export const students: Student[] = [
     phone: '(11) 99555-2211',
     email: 'mari.oliveira@email.com',
     cep: '05435-000',
+    street: '',
+    addressNumber: '',
+    neighborhood: '',
+    city: '',
+    state: '',
     address: 'Rua Harmonia, 88 — Vila Madalena, São Paulo/SP',
+    emergencyName: 'Sônia Oliveira',
+    emergencyRelation: 'mãe',
+    emergencyPhone: '(11) 99666-8899',
     emergencyContact: 'Sônia Oliveira (mãe) — (11) 99666-8899',
     active: true,
+    hasActiveContract: true,
     since: '2025-01-15',
     objective: 'Melhora de postura e condicionamento geral.',
     pathologies: 'Cervicalgia tensional.',
@@ -946,9 +990,18 @@ export const students: Student[] = [
     phone: '(11) 98123-9090',
     email: 'roberto.nunes@email.com',
     cep: '05422-000',
+    street: '',
+    addressNumber: '',
+    neighborhood: '',
+    city: '',
+    state: '',
     address: 'Rua dos Pinheiros, 500 — Pinheiros, São Paulo/SP',
+    emergencyName: 'Clara Nunes',
+    emergencyRelation: 'filha',
+    emergencyPhone: '(11) 99321-4455',
     emergencyContact: 'Clara Nunes (filha) — (11) 99321-4455',
     active: true,
+    hasActiveContract: true,
     since: '2024-06-01',
     objective: 'Manutenção da mobilidade e prevenção de quedas.',
     pathologies: 'Artrose de quadril, hipertensão controlada.',
@@ -1007,9 +1060,18 @@ export const students: Student[] = [
     phone: '(11) 99888-7766',
     email: 'fernanda.alves@email.com',
     cep: '05408-000',
+    street: '',
+    addressNumber: '',
+    neighborhood: '',
+    city: '',
+    state: '',
     address: 'Rua Cardeal Arcoverde, 300 — Pinheiros, São Paulo/SP',
+    emergencyName: 'Paulo Alves',
+    emergencyRelation: 'irmão',
+    emergencyPhone: '(11) 99444-2211',
     emergencyContact: 'Paulo Alves (irmão) — (11) 99444-2211',
     active: true,
+    hasActiveContract: true,
     since: '2024-11-04',
     objective: 'Pilates na gravidez — bem-estar e preparo para o parto.',
     pathologies: 'Gestação de 24 semanas.',
@@ -1068,9 +1130,18 @@ export const students: Student[] = [
     phone: '(11) 99222-1010',
     email: 'juliana.prado@email.com',
     cep: '05406-000',
+    street: '',
+    addressNumber: '',
+    neighborhood: '',
+    city: '',
+    state: '',
     address: 'Rua Teodoro Sampaio, 900 — Pinheiros, São Paulo/SP',
+    emergencyName: 'Renato Prado',
+    emergencyRelation: 'pai',
+    emergencyPhone: '(11) 99123-0099',
     emergencyContact: 'Renato Prado (pai) — (11) 99123-0099',
     active: false,
+    hasActiveContract: false,
     since: '2023-03-10',
     objective: 'Condicionamento físico e emagrecimento.',
     pathologies: 'Nenhuma.',
@@ -1114,9 +1185,18 @@ export const students: Student[] = [
     phone: '(11) 98765-4321',
     email: 'pedro.costa@email.com',
     cep: '05416-000',
+    street: '',
+    addressNumber: '',
+    neighborhood: '',
+    city: '',
+    state: '',
     address: 'Rua Fradique Coutinho, 150 — Vila Madalena, São Paulo/SP',
+    emergencyName: 'Luiza Costa',
+    emergencyRelation: 'mãe',
+    emergencyPhone: '(11) 99555-6677',
     emergencyContact: 'Luiza Costa (mãe) — (11) 99555-6677',
     active: true,
+    hasActiveContract: true,
     since: '2025-07-18',
     objective: 'Correção postural e fortalecimento após lesão esportiva.',
     pathologies: 'Lombalgia mecânica.',
@@ -1176,9 +1256,18 @@ export const students: Student[] = [
     phone: '(11) 99010-2030',
     email: 'bia.ramos@email.com',
     cep: '05433-000',
+    street: '',
+    addressNumber: '',
+    neighborhood: '',
+    city: '',
+    state: '',
     address: 'Rua Girassol, 42 — Vila Madalena, São Paulo/SP',
+    emergencyName: 'Diego Ramos',
+    emergencyRelation: 'marido',
+    emergencyPhone: '(11) 99080-1020',
     emergencyContact: 'Diego Ramos (marido) — (11) 99080-1020',
     active: true,
+    hasActiveContract: true,
     since: '2024-09-12',
     objective: 'Alívio de dores por fibromialgia e qualidade de vida.',
     pathologies: 'Fibromialgia.',
@@ -2364,6 +2453,14 @@ export function patchStudent(id: string, patch: Partial<Student>) {
   return next
 }
 
+/** Remove o aluno do store em memória (após exclusão na API). */
+export function removeStudentFromStore(id: string) {
+  const index = students.findIndex((s) => s.id === id)
+  if (index < 0) return false
+  students.splice(index, 1)
+  return true
+}
+
 /** Garante que o aluno da API exista no store em memória (agenda/frequência). */
 export function upsertStudentInStore(student: Student) {
   const index = students.findIndex((s) => s.id === student.id)
@@ -2381,6 +2478,26 @@ export function upsertStudentInStore(student: Student) {
   }
   students[index] = { ...students[index], ...clone }
   return students[index]
+}
+
+/**
+ * Substitui o store em memória pelos alunos da API.
+ * Evita que mocks legados continuem aparecendo na agenda.
+ */
+export function replaceStudentsInStore(list: Student[]) {
+  students.splice(
+    0,
+    students.length,
+    ...list.map((student) => ({
+      ...student,
+      schedule: student.schedule.map((s) => ({ ...s })),
+      payments: student.payments.map((p) => ({ ...p })),
+      assessments: student.assessments.map((a) => ({ ...a })),
+      evolutions: student.evolutions.map((e) => ({ ...e })),
+      photos: student.photos.map((p) => ({ ...p })),
+    })),
+  )
+  return students
 }
 
 export function formatCurrency(value: number) {
@@ -2419,8 +2536,11 @@ export function age(birthDate: string) {
   return a
 }
 
-export function bmi(weight: number, height: number) {
-  return +(weight / (height * height)).toFixed(1)
+/** Calcula IMC a partir do peso (kg) e da altura (cm). */
+export function bmi(weight: number, heightCm: number) {
+  if (!heightCm || heightCm <= 0) return 0
+  const heightM = heightCm / 100
+  return +(weight / (heightM * heightM)).toFixed(1)
 }
 
 export function bmiLabel(value: number) {
@@ -2916,7 +3036,8 @@ export function buildWeekSessions(monday: Date, today = new Date()): ClassSessio
   const sessions: ClassSession[] = []
 
   for (const student of students) {
-    if (!student.active) continue
+    if (!student.active || !student.hasActiveContract) continue
+    if (student.schedule.length === 0) continue
     // Respeita o limite do plano mesmo se houver dados inconsistentes.
     const limitedSchedule = scheduleWithinPlanLimit(
       student.schedule,
@@ -3380,6 +3501,36 @@ export function getAttendanceStats(sessions: ClassSession[], today = new Date())
     agendadas,
     rate,
   }
+}
+
+const weekdayChartLabel: Record<Weekday, string> = {
+  Segunda: 'Seg',
+  Terça: 'Ter',
+  Quarta: 'Qua',
+  Quinta: 'Qui',
+  Sexta: 'Sex',
+  Sábado: 'Sáb',
+}
+
+/** Presenças e faltas por dia, a partir da grade real da semana. */
+export function buildWeeklyAttendanceChart(
+  monday: Date,
+  existing: ClassSession[] = [],
+  today = new Date(),
+) {
+  const sessions = mergeWeekSessions(monday, existing, today)
+  return getWeekColumns(monday).map((column) => {
+    const daySessions = sessions.filter(
+      (s) => s.date === column.iso && s.status !== 'cancelada',
+    )
+    return {
+      day: weekdayChartLabel[column.weekday],
+      date: column.iso,
+      weekday: column.weekday,
+      presencas: daySessions.filter((s) => s.status === 'presente').length,
+      faltas: daySessions.filter((s) => s.status === 'falta').length,
+    }
+  })
 }
 
 /**

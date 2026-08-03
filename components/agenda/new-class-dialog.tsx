@@ -370,7 +370,9 @@ export function NewClassDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{dialogTitle}</DialogTitle>
-          <DialogDescription>{dialogDescription}</DialogDescription>
+          {dialogDescription ? (
+            <DialogDescription>{dialogDescription}</DialogDescription>
+          ) : null}
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <FieldGroup>

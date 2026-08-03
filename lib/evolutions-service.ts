@@ -1,4 +1,5 @@
 import type { Evolution } from '@/lib/data'
+import { findGoverningContract } from '@/lib/contracts-service'
 import { prisma } from '@/lib/prisma'
 import { parseIsoDate } from '@/lib/db-mappers'
 import { serializeEvolutions } from '@/lib/serializers/student'
@@ -31,6 +32,13 @@ export async function createEvolutionRecord(
 ) {
   const student = await prisma.student.findUnique({ where: { id: studentId } })
   if (!student) throw new Error('Aluno não encontrado')
+
+  const governing = await findGoverningContract(studentId)
+  if (!governing) {
+    throw new Error(
+      'Assine um contrato ativo antes de registrar evoluções',
+    )
+  }
 
   const studio = await prisma.studio.findUnique({
     where: { id: student.studioId },

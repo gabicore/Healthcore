@@ -55,6 +55,7 @@ import {
   renameScheduleSlot,
   replaceScheduleSlots,
   replaceStudioHours,
+  replaceStudentsInStore,
   sessionParticipantName,
   setAttendanceStatus,
   toIsoDate,
@@ -64,6 +65,7 @@ import {
   type WeekDayColumn,
 } from '@/lib/data'
 import { fetchStudioHours, fetchTimeSlots } from '@/lib/settings-api'
+import { fetchStudents } from '@/lib/students-api'
 import {
   createStudentSession,
   updateStudentSession,
@@ -102,7 +104,7 @@ export function WeeklyAgenda() {
     Record<string, ClassSession[]>
   >(() => {
     const key = weekKey(getMonday(today))
-    return { [key]: mergeWeekSessions(getMonday(today), [], today) }
+    return { [key]: [] }
   })
   const [booking, setBooking] = useState<{
     date: string
@@ -115,12 +117,25 @@ export function WeeklyAgenda() {
 
   useEffect(() => {
     let cancelled = false
-    void Promise.all([fetchTimeSlots(), fetchStudioHours()])
-      .then(([slots, hours]) => {
+    void Promise.all([
+      fetchTimeSlots(),
+      fetchStudioHours(),
+      fetchStudents({ active: true }),
+    ])
+      .then(([slots, hours, list]) => {
         if (cancelled) return
         replaceScheduleSlots(slots)
         replaceStudioHours(hours)
+        replaceStudentsInStore(list)
         setSlotVersion((v) => v + 1)
+        setSessionsByWeek((prev) => {
+          const next = { ...prev }
+          for (const week of Object.keys(next)) {
+            const mondayDate = new Date(`${week}T12:00:00`)
+            next[week] = mergeWeekSessions(mondayDate, [], today)
+          }
+          return next
+        })
       })
       .catch(() => {
         /* mantém grade/horários padrão em memória */
@@ -128,7 +143,7 @@ export function WeeklyAgenda() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [today])
 
   const key = weekKey(monday)
   const columns = useMemo(() => getWeekColumns(monday), [monday])

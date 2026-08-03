@@ -346,8 +346,17 @@ model Student {
   phone            String        @default("")
   email            String        @default("")
   cep              String        @default("")
+  street           String        @default("")
+  addressNumber    String        @default("")
+  neighborhood     String        @default("")
+  city             String        @default("")
+  state            String        @default("")
   address          String        @db.Text
-  emergencyContact String        @db.Text
+  emergencyName     String        @default("")
+  emergencyRelation String        @default("")
+  emergencyPhone    String        @default("")
+  /** Texto composto (nome + parentesco + telefone) para contratos/impressão. */
+  emergencyContact  String        @db.Text
   active           Boolean       @default(true)
   since            DateTime      @db.Date
   objective        String        @db.Text

@@ -19,7 +19,7 @@ export const createAssessmentSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   weight: z.number().nonnegative().optional().default(0),
-  height: z.number().positive().optional().default(1.65),
+  height: z.number().nonnegative().optional().default(0),
   bodyFat: z.number().nonnegative().optional().nullable(),
   muscleMass: z.number().nonnegative().optional().nullable(),
   measures: measuresSchema.optional(),
@@ -31,7 +31,7 @@ export const updateAssessmentSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   weight: z.number().nonnegative().optional(),
-  height: z.number().positive().optional(),
+  height: z.number().nonnegative().optional(),
   bodyFat: z.number().nonnegative().optional().nullable(),
   muscleMass: z.number().nonnegative().optional().nullable(),
   measures: measuresSchema.partial().optional(),

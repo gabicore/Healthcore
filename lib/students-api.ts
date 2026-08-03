@@ -7,9 +7,14 @@ import type {
 async function parseJson<T>(response: Response): Promise<T> {
   const data = await response.json()
   if (!response.ok) {
-    throw new Error(
-      typeof data?.error === 'string' ? data.error : 'Falha na requisição',
-    )
+    const error = data?.error
+    const message =
+      typeof error === 'string'
+        ? error
+        : typeof error?.message === 'string'
+          ? error.message
+          : 'Falha na requisição'
+    throw new Error(message)
   }
   return data as T
 }
@@ -56,7 +61,14 @@ export async function updateStudent(
   return parseJson<Student>(response)
 }
 
-export async function deactivateStudent(id: string): Promise<Student> {
-  const response = await fetch(`/api/alunos/${id}`, { method: 'DELETE' })
-  return parseJson<Student>(response)
+export async function deleteStudent(
+  id: string,
+  adminPassword: string,
+): Promise<{ id: string }> {
+  const response = await fetch(`/api/alunos/${id}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adminPassword }),
+  })
+  return parseJson<{ id: string }>(response)
 }

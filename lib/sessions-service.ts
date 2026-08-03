@@ -94,6 +94,30 @@ export async function listStudentSessions(
   return rows.map(serializeSession)
 }
 
+/** Sessões do estúdio em um intervalo (todas as alunas / tipos). */
+export async function listStudioSessions(opts?: {
+  fromDate?: string
+  toDate?: string
+  types?: ClassSessionType[]
+}) {
+  const rows = await prisma.classSession.findMany({
+    where: {
+      studioId: DEFAULT_STUDIO_ID,
+      ...(opts?.fromDate || opts?.toDate
+        ? {
+            date: {
+              ...(opts.fromDate ? { gte: parseIsoDate(opts.fromDate) } : {}),
+              ...(opts.toDate ? { lte: parseIsoDate(opts.toDate) } : {}),
+            },
+          }
+        : {}),
+      ...(opts?.types?.length ? { type: { in: opts.types } } : {}),
+    },
+    orderBy: [{ date: 'asc' }, { time: 'asc' }],
+  })
+  return rows.map(serializeSession)
+}
+
 export async function createStudentSessionRecord(
   studentId: string,
   input: CreateSessionInput,

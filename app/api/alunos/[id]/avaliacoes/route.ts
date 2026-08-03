@@ -35,6 +35,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ) {
         return jsonError(error.message, 404)
       }
+      if (
+        error instanceof Error &&
+        error.message.includes('contrato ativo')
+      ) {
+        return jsonError(error.message, 400)
+      }
       throw error
     }
   } catch (error) {

@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import {
   CartesianGrid,
   Line,
@@ -17,7 +17,6 @@ import {
   ClipboardList,
   FileText,
   HeartPulse,
-  Images,
   Plus,
   Ruler,
   Trash2,
@@ -27,6 +26,8 @@ import {
 import { toast } from 'sonner'
 
 import { InlineField } from '@/components/students/inline-field'
+import { DeleteStudentDialog } from '@/components/students/delete-student-dialog'
+import { PersonalDataPanel } from '@/components/students/personal-data-panel'
 import { StudentAttendancePanel } from '@/components/students/student-attendance'
 import { StudentContractsPanel } from '@/components/students/student-contracts'
 import { PageHeader } from '@/components/page-header'
@@ -85,7 +86,6 @@ import {
   type PaymentMethod,
   type PhysicalAssessment,
   type ScheduleSlot,
-  type Sex,
   type Student,
   type Weekday,
   age,
@@ -146,12 +146,6 @@ const chartConfig = {
   imc: { label: 'IMC', color: 'var(--chart-2)' },
 } satisfies ChartConfig
 
-const sexOptions = [
-  { value: 'Feminino', label: 'Feminino' },
-  { value: 'Masculino', label: 'Masculino' },
-  { value: 'Outro', label: 'Outro' },
-]
-
 const paymentOptions = [
   { value: 'PIX', label: 'PIX' },
   { value: 'Cartão de crédito', label: 'Cartão de crédito' },
@@ -159,12 +153,14 @@ const paymentOptions = [
   { value: 'Dinheiro', label: 'Dinheiro' },
 ]
 
-const activeOptions = [
-  { value: 'true', label: 'Ativo' },
-  { value: 'false', label: 'Inativo' },
-]
-
-export function StudentProfile({ student: initial }: { student: Student }) {
+export function StudentProfile({
+  student: initial,
+  initialTab = 'dados',
+}: {
+  student: Student
+  initialTab?: string
+}) {
+  const router = useRouter()
   const [student, setStudent] = useState(initial)
   const [plans, setPlans] = useState<Plan[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
@@ -173,6 +169,8 @@ export function StudentProfile({ student: initial }: { student: Student }) {
   const [assessmentIndex, setAssessmentIndex] = useState(0)
   const [evolutionIndex, setEvolutionIndex] = useState(0)
   const [scheduleTick, setScheduleTick] = useState(0)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState(initialTab)
 
   useEffect(() => {
     upsertStudentInStore(initial)
@@ -365,9 +363,16 @@ export function StudentProfile({ student: initial }: { student: Student }) {
       'phone',
       'email',
       'cep',
+      'street',
+      'addressNumber',
+      'neighborhood',
+      'city',
+      'state',
       'address',
+      'emergencyName',
+      'emergencyRelation',
+      'emergencyPhone',
       'emergencyContact',
-      'active',
       'since',
       'objective',
       'pathologies',
@@ -442,6 +447,12 @@ export function StudentProfile({ student: initial }: { student: Student }) {
   }
 
   async function addEvolution() {
+    if (!hasSignedContract) {
+      toast.error('Contrato ativo necessário', {
+        description: 'Assine um contrato ativo antes de registrar evoluções.',
+      })
+      return
+    }
     try {
       const created = await createEvolutionApi(student.id)
       setStudent((prev) => ({
@@ -528,6 +539,12 @@ export function StudentProfile({ student: initial }: { student: Student }) {
   }
 
   async function addAssessment() {
+    if (!hasSignedContract) {
+      toast.error('Contrato ativo necessário', {
+        description: 'Assine um contrato ativo antes de registrar avaliações.',
+      })
+      return
+    }
     try {
       const created = await createAssessmentApi(student.id)
       setStudent((prev) => ({
@@ -637,6 +654,15 @@ export function StudentProfile({ student: initial }: { student: Student }) {
         }`}
       >
         <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          onClick={() => setDeleteOpen(true)}
+        >
+          <Trash2 data-icon="inline-start" />
+          Excluir
+        </Button>
+        <Button
           variant="ghost"
           size="sm"
           nativeButton={false}
@@ -646,21 +672,26 @@ export function StudentProfile({ student: initial }: { student: Student }) {
         </Button>
       </PageHeader>
 
-      <div className="flex flex-col gap-4 p-4 md:p-6">
-        <p className="text-xs text-muted-foreground">
-          Clique em qualquer informação para editar diretamente na tela.
-        </p>
+      <DeleteStudentDialog
+        open={deleteOpen}
+        studentId={student.id}
+        studentName={student.name}
+        onOpenChange={setDeleteOpen}
+        onDeleted={() => router.push('/alunos')}
+      />
 
+      <div className="flex flex-col gap-4 p-4 md:p-6">
         <Tabs
-          defaultValue="dados"
-          className="gap-4"
+          value={activeTab}
           onValueChange={(value) => {
+            setActiveTab(value)
             if (value === 'agenda' || value === 'financeiro') {
               loadContracts()
             }
           }}
+          className="gap-4"
         >
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-hidden pb-1">
             <TabsList variant="line" className="w-max">
               <TabsTrigger value="dados">
                 <User data-icon="inline-start" />
@@ -678,10 +709,6 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                 <ClipboardList data-icon="inline-start" />
                 Evolução
               </TabsTrigger>
-              <TabsTrigger value="fotos">
-                <Images data-icon="inline-start" />
-                Fotos
-              </TabsTrigger>
               <TabsTrigger value="financeiro">
                 <Wallet data-icon="inline-start" />
                 Financeiro
@@ -698,97 +725,23 @@ export function StudentProfile({ student: initial }: { student: Student }) {
           </div>
 
           <TabsContent value="dados">
-            <Card>
-              <CardHeader>
-                <CardTitle>Dados pessoais</CardTitle>
-                <CardDescription>
-                  Clique no valor para editar
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
-                  <InlineField
-                    label="Nome completo"
-                    value={student.name}
-                    onSave={(v) => updateField('name', v)}
-                  />
-                  <InlineField
-                    label="Data de nascimento"
-                    value={student.birthDate}
-                    displayValue={formatShortDate(student.birthDate)}
-                    type="date"
-                    onSave={(v) => updateField('birthDate', v)}
-                  />
-                  <InlineField
-                    label="Sexo"
-                    value={student.sex}
-                    type="select"
-                    options={sexOptions}
-                    onSave={(v) => updateField('sex', v as Sex)}
-                  />
-                  <InlineField
-                    label="CPF"
-                    value={student.cpf}
-                    placeholder="000.000.000-00"
-                    onSave={(v) => updateField('cpf', v)}
-                  />
-                  <InlineField
-                    label="Telefone"
-                    value={student.phone}
-                    type="tel"
-                    onSave={(v) => updateField('phone', v)}
-                  />
-                  <InlineField
-                    label="E-mail"
-                    value={student.email}
-                    type="email"
-                    onSave={(v) => updateField('email', v)}
-                  />
-                  <InlineField
-                    label="CEP"
-                    value={student.cep}
-                    placeholder="00000-000"
-                    onSave={(v) => updateField('cep', v)}
-                  />
-                  <InlineField
-                    label="Situação"
-                    value={String(student.active)}
-                    displayValue={student.active ? 'Ativo' : 'Inativo'}
-                    type="select"
-                    options={activeOptions}
-                    onSave={(v) => updateField('active', v === 'true')}
-                  />
-                  <InlineField
-                    label="Aluno desde"
-                    value={student.since}
-                    displayValue={formatShortDate(student.since)}
-                    type="date"
-                    onSave={(v) => updateField('since', v)}
-                  />
-                  <InlineField
-                    label="Endereço"
-                    value={student.address}
-                    className="sm:col-span-2 lg:col-span-3"
-                    onSave={(v) => updateField('address', v)}
-                  />
-                  <InlineField
-                    label="Contato de emergência"
-                    value={student.emergencyContact}
-                    className="sm:col-span-2 lg:col-span-3"
-                    onSave={(v) => updateField('emergencyContact', v)}
-                  />
-                </dl>
-              </CardContent>
-            </Card>
+            <PersonalDataPanel
+              student={student}
+              hasSignedContract={hasSignedContract}
+              onSave={async (patch) => {
+                const updated = await persistProfile(patch)
+                if (!updated) {
+                  throw new Error('Não foi possível salvar os dados')
+                }
+                return updated
+              }}
+            />
           </TabsContent>
 
           <TabsContent value="clinico">
             <Card>
               <CardHeader>
                 <CardTitle>Histórico clínico</CardTitle>
-                <CardDescription>
-                  Clique no valor para editar
-                </CardDescription>
               </CardHeader>
               <CardContent>
                 <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
@@ -841,23 +794,22 @@ export function StudentProfile({ student: initial }: { student: Student }) {
           </TabsContent>
 
           <TabsContent value="avaliacoes" className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-muted-foreground">
-                Clique nos valores para editar · IMC calculado automaticamente
-              </p>
-              <Button size="sm" onClick={addAssessment}>
-                <Plus data-icon="inline-start" />
-                Nova avaliação
-              </Button>
-            </div>
-
             {student.assessments.length === 0 ? (
               <EmptyState
                 icon={<Ruler className="size-6" />}
                 title="Nenhuma avaliação registrada"
                 description="Registre a primeira avaliação física para acompanhar a evolução."
-                action={
-                  <Button size="sm" onClick={addAssessment}>
+                headerAction={
+                  <Button
+                    size="sm"
+                    onClick={addAssessment}
+                    disabled={!hasSignedContract}
+                    title={
+                      hasSignedContract
+                        ? undefined
+                        : 'Assine um contrato ativo para registrar avaliações'
+                    }
+                  >
                     <Plus data-icon="inline-start" />
                     Nova avaliação
                   </Button>
@@ -865,6 +817,87 @@ export function StudentProfile({ student: initial }: { student: Student }) {
               />
             ) : (
               <>
+                <Card>
+                  <CardHeader className="flex flex-row flex-wrap items-center justify-end gap-3 space-y-0">
+                    {sortedAssessments.length > 1 ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon-sm"
+                          disabled={assessmentIndex === 0}
+                          onClick={() =>
+                            setAssessmentIndex((i) => Math.max(0, i - 1))
+                          }
+                          aria-label="Avaliação mais recente"
+                        >
+                          <ChevronLeft />
+                        </Button>
+                        <span className="min-w-16 text-center text-sm tabular-nums text-muted-foreground">
+                          {assessmentIndex + 1} / {sortedAssessments.length}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon-sm"
+                          disabled={
+                            assessmentIndex >= sortedAssessments.length - 1
+                          }
+                          onClick={() =>
+                            setAssessmentIndex((i) =>
+                              Math.min(sortedAssessments.length - 1, i + 1),
+                            )
+                          }
+                          aria-label="Avaliação anterior"
+                        >
+                          <ChevronRight />
+                        </Button>
+                      </div>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      onClick={addAssessment}
+                      disabled={!hasSignedContract}
+                      title={
+                        hasSignedContract
+                          ? undefined
+                          : 'Assine um contrato ativo para registrar avaliações'
+                      }
+                    >
+                      <Plus data-icon="inline-start" />
+                      Nova avaliação
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    {currentAssessment ? (
+                      <AssessmentSlide
+                        assessment={currentAssessment}
+                        isLatest={assessmentIndex === 0}
+                        onUpdate={updateAssessment}
+                        onRemove={removeAssessment}
+                      />
+                    ) : null}
+
+                    {sortedAssessments.length > 1 ? (
+                      <div className="mt-5 flex items-center justify-center gap-1.5">
+                        {sortedAssessments.map((a, i) => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            onClick={() => setAssessmentIndex(i)}
+                            aria-label={`Ir para avaliação ${i + 1}`}
+                            className={`h-1.5 rounded-full transition-all ${
+                              i === assessmentIndex
+                                ? 'w-6 bg-primary'
+                                : 'w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/50'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                   <Card>
                     <CardContent className="flex flex-col gap-1 pt-6">
@@ -958,106 +991,27 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                     </CardContent>
                   </Card>
                 ) : null}
-
-                <Card>
-                  <CardHeader className="gap-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="flex flex-col gap-1">
-                        <CardTitle>Histórico de avaliações</CardTitle>
-                        <CardDescription>
-                          {sortedAssessments.length} registro
-                          {sortedAssessments.length === 1 ? '' : 's'} · mais
-                          recente primeiro
-                        </CardDescription>
-                      </div>
-                      {sortedAssessments.length > 1 ? (
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            disabled={assessmentIndex === 0}
-                            onClick={() =>
-                              setAssessmentIndex((i) => Math.max(0, i - 1))
-                            }
-                            aria-label="Avaliação mais recente"
-                          >
-                            <ChevronLeft />
-                          </Button>
-                          <span className="min-w-16 text-center text-sm tabular-nums text-muted-foreground">
-                            {assessmentIndex + 1} / {sortedAssessments.length}
-                          </span>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            disabled={
-                              assessmentIndex >= sortedAssessments.length - 1
-                            }
-                            onClick={() =>
-                              setAssessmentIndex((i) =>
-                                Math.min(sortedAssessments.length - 1, i + 1),
-                              )
-                            }
-                            aria-label="Avaliação anterior"
-                          >
-                            <ChevronRight />
-                          </Button>
-                        </div>
-                      ) : null}
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    {currentAssessment ? (
-                      <AssessmentSlide
-                        assessment={currentAssessment}
-                        isLatest={assessmentIndex === 0}
-                        onUpdate={updateAssessment}
-                        onRemove={removeAssessment}
-                      />
-                    ) : null}
-
-                    {sortedAssessments.length > 1 ? (
-                      <div className="mt-5 flex items-center justify-center gap-1.5">
-                        {sortedAssessments.map((a, i) => (
-                          <button
-                            key={a.id}
-                            type="button"
-                            onClick={() => setAssessmentIndex(i)}
-                            aria-label={`Ir para avaliação ${i + 1}`}
-                            className={`h-1.5 rounded-full transition-all ${
-                              i === assessmentIndex
-                                ? 'w-6 bg-primary'
-                                : 'w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/50'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
               </>
             )}
           </TabsContent>
 
           <TabsContent value="evolucao" className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-muted-foreground">
-                Clique nos campos para editar ou adicione um novo bloco
-              </p>
-              <Button size="sm" onClick={addEvolution}>
-                <Plus data-icon="inline-start" />
-                Nova evolução
-              </Button>
-            </div>
-
             {student.evolutions.length === 0 ? (
               <EmptyState
                 icon={<ClipboardList className="size-6" />}
                 title="Nenhuma evolução registrada"
                 description="As anotações clínicas aparecerão aqui em ordem cronológica."
-                action={
-                  <Button size="sm" onClick={addEvolution}>
+                headerAction={
+                  <Button
+                    size="sm"
+                    onClick={addEvolution}
+                    disabled={!hasSignedContract}
+                    title={
+                      hasSignedContract
+                        ? undefined
+                        : 'Assine um contrato ativo para registrar evoluções'
+                    }
+                  >
                     <Plus data-icon="inline-start" />
                     Nova evolução
                   </Button>
@@ -1065,52 +1019,55 @@ export function StudentProfile({ student: initial }: { student: Student }) {
               />
             ) : (
               <Card>
-                <CardHeader className="gap-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex flex-col gap-1">
-                      <CardTitle>Histórico de evoluções</CardTitle>
-                      <CardDescription>
-                        {sortedEvolutions.length} registro
-                        {sortedEvolutions.length === 1 ? '' : 's'} · mais
-                        recente primeiro
-                      </CardDescription>
+                <CardHeader className="flex flex-row flex-wrap items-center justify-end gap-3 space-y-0">
+                  {sortedEvolutions.length > 1 ? (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        disabled={evolutionIndex === 0}
+                        onClick={() =>
+                          setEvolutionIndex((i) => Math.max(0, i - 1))
+                        }
+                        aria-label="Evolução mais recente"
+                      >
+                        <ChevronLeft />
+                      </Button>
+                      <span className="min-w-16 text-center text-sm tabular-nums text-muted-foreground">
+                        {evolutionIndex + 1} / {sortedEvolutions.length}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        disabled={
+                          evolutionIndex >= sortedEvolutions.length - 1
+                        }
+                        onClick={() =>
+                          setEvolutionIndex((i) =>
+                            Math.min(sortedEvolutions.length - 1, i + 1),
+                          )
+                        }
+                        aria-label="Evolução anterior"
+                      >
+                        <ChevronRight />
+                      </Button>
                     </div>
-                    {sortedEvolutions.length > 1 ? (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon-sm"
-                          disabled={evolutionIndex === 0}
-                          onClick={() =>
-                            setEvolutionIndex((i) => Math.max(0, i - 1))
-                          }
-                          aria-label="Evolução mais recente"
-                        >
-                          <ChevronLeft />
-                        </Button>
-                        <span className="min-w-16 text-center text-sm tabular-nums text-muted-foreground">
-                          {evolutionIndex + 1} / {sortedEvolutions.length}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon-sm"
-                          disabled={
-                            evolutionIndex >= sortedEvolutions.length - 1
-                          }
-                          onClick={() =>
-                            setEvolutionIndex((i) =>
-                              Math.min(sortedEvolutions.length - 1, i + 1),
-                            )
-                          }
-                          aria-label="Evolução anterior"
-                        >
-                          <ChevronRight />
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    onClick={addEvolution}
+                    disabled={!hasSignedContract}
+                    title={
+                      hasSignedContract
+                        ? undefined
+                        : 'Assine um contrato ativo para registrar evoluções'
+                    }
+                  >
+                    <Plus data-icon="inline-start" />
+                    Nova evolução
+                  </Button>
                 </CardHeader>
                 <CardContent>
                   {currentEvolution ? (
@@ -1144,65 +1101,17 @@ export function StudentProfile({ student: initial }: { student: Student }) {
             )}
           </TabsContent>
 
-          <TabsContent value="fotos">
-            {student.photos.length === 0 ? (
+          <TabsContent value="financeiro" className="flex flex-col gap-4">
+            {!hasSignedContract ? (
               <EmptyState
-                icon={<Images className="size-6" />}
-                title="Nenhuma foto de evolução"
-                description="Faça upload de fotos para comparar a evolução lado a lado."
+                icon={<Wallet className="size-6" />}
+                title="Nenhuma informação financeira"
+                description="Os dados de plano e cobrança aparecem após a assinatura do contrato."
               />
             ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Comparativo de evolução</CardTitle>
-                  <CardDescription>
-                    Fotos organizadas por data
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                    {student.photos.map((p) => (
-                      <figure key={p.id} className="flex flex-col gap-2">
-                        <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-border bg-muted">
-                          <Image
-                            src={p.url || '/placeholder.svg'}
-                            alt={`Foto de evolução — ${p.label}`}
-                            fill
-                            className="object-cover"
-                            sizes="(max-width: 640px) 50vw, 25vw"
-                          />
-                        </div>
-                        <figcaption className="flex items-center justify-between">
-                          <span className="text-sm font-medium">{p.label}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {formatShortDate(p.date).slice(0, 5)}
-                          </span>
-                        </figcaption>
-                      </figure>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </TabsContent>
-
-          <TabsContent value="financeiro" className="flex flex-col gap-4">
+              <>
             <Card>
-              <CardHeader>
-                <CardTitle>Plano e cobrança</CardTitle>
-                <CardDescription>
-                  {hasSignedContract
-                    ? 'Valores do contrato ativo (assinado) — altere pelo contrato para atualizar financeiro e agenda'
-                    : 'Disponível após assinatura de um contrato. Rascunhos não preenchem estes dados.'}
-                </CardDescription>
-              </CardHeader>
               <CardContent>
-                {!hasSignedContract ? (
-                  <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                    Sem contrato assinado. Plano, valores e cobrança ficam
-                    vazios até um contrato ser ativado.
-                  </p>
-                ) : (
                 <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
                   <div className="flex flex-col gap-0.5 py-2">
                     <dt className="text-xs text-muted-foreground">
@@ -1288,7 +1197,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                       Status financeiro
                     </dt>
                     <dd className="flex items-center gap-2 pt-1">
-                      <ActiveBadge active={student.active} />
+                          <ActiveBadge active={hasSignedContract} />
                       <PaymentStatusSelect
                         value={studentPaymentStatus(student)}
                         aria-label="Status financeiro do aluno"
@@ -1332,20 +1241,9 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                     </dd>
                   </div>
                 </dl>
-                )}
               </CardContent>
             </Card>
 
-            {!hasSignedContract ? (
-              <Card>
-                <CardContent className="pt-6">
-                  <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                    Sem cobranças. As parcelas aparecem após a assinatura do
-                    contrato.
-                  </p>
-                </CardContent>
-              </Card>
-            ) : (
             <Card className="overflow-hidden py-0">
               <Table>
                 <TableHeader>
@@ -1499,6 +1397,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                 </TableBody>
               </Table>
             </Card>
+              </>
             )}
           </TabsContent>
 
@@ -1513,28 +1412,16 @@ export function StudentProfile({ student: initial }: { student: Student }) {
           </TabsContent>
 
           <TabsContent value="agenda" className="flex flex-col gap-6">
+            {!hasSignedContract ? (
+              <EmptyState
+                icon={<CalendarClock className="size-6" />}
+                title="Nenhuma agenda fixa"
+                description="Os horários fixos aparecem após a assinatura do contrato."
+              />
+            ) : (
+              <>
             <Card>
-              <CardHeader>
-                <CardTitle>Agenda fixa</CardTitle>
-                <CardDescription>
-                  {hasSignedContract
-                    ? `Vinculada ao plano ${
-                        governingContract?.planLabel ||
-                        planName(effectivePlanId)
-                      } (${contractSourceLabel}) · ${
-                        displaySchedule.length
-                      }/${effectiveWeeklyLimit ?? '—'} horário(s) na semana. Reposições ficam na seção de frequência abaixo.`
-                    : 'Disponível após assinatura de um contrato. Sem contrato ativo a agenda fica vazia.'}
-                </CardDescription>
-              </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                {!hasSignedContract ? (
-                  <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                    Sem contrato assinado. Defina a agenda fixa depois de ativar
-                    um contrato.
-                  </p>
-                ) : (
-                  <>
                     <div className="grid gap-3 rounded-xl border p-4 sm:grid-cols-[1fr_auto] sm:items-end">
                       <div className="grid flex-1 grid-cols-2 gap-3">
                         <div className="flex flex-col gap-1.5">
@@ -1667,12 +1554,9 @@ export function StudentProfile({ student: initial }: { student: Student }) {
                         </div>
                       </div>
                     )}
-                  </>
-                )}
               </CardContent>
             </Card>
 
-            {hasSignedContract ? (
             <StudentAttendancePanel
               studentId={student.id}
               schedule={displaySchedule}
@@ -1682,22 +1566,7 @@ export function StudentProfile({ student: initial }: { student: Student }) {
               historyTo={governingContract!.endDate}
               plans={plans}
             />
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">
-                    Frequência e presença
-                  </CardTitle>
-                  <CardDescription>
-                    O histórico de aulas aparece após a assinatura do contrato.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                    Sem contrato assinado. Nenhuma aula para exibir.
-                  </p>
-                </CardContent>
-              </Card>
+              </>
             )}
           </TabsContent>
         </Tabs>
@@ -1852,9 +1721,9 @@ function AssessmentSlide({
           }
         />
         <InlineField
-          label="Altura (m)"
+          label="Altura (cm)"
           value={String(assessment.height)}
-          displayValue={`${assessment.height} m`}
+          displayValue={`${assessment.height} cm`}
           type="number"
           onSave={(v) =>
             onUpdate(assessment.id, { height: Number(v) || 0 })
@@ -1940,21 +1809,32 @@ function EmptyState({
   title,
   description,
   action,
+  headerAction,
 }: {
   icon: React.ReactNode
   title: string
   description: string
   action?: React.ReactNode
+  headerAction?: React.ReactNode
 }) {
   return (
     <Card>
+      {headerAction ? (
+        <CardHeader className="flex flex-row items-center justify-end space-y-0">
+          {headerAction}
+        </CardHeader>
+      ) : null}
       <Empty className="py-12">
-        <EmptyHeader>
+        <EmptyHeader className="max-w-none items-center text-center">
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
-          <EmptyTitle>{title}</EmptyTitle>
-          <EmptyDescription>{description}</EmptyDescription>
+          <EmptyTitle className="text-center">{title}</EmptyTitle>
+          <EmptyDescription className="whitespace-nowrap text-center">
+            {description}
+          </EmptyDescription>
         </EmptyHeader>
-        {action ? <div className="mt-4">{action}</div> : null}
+        {action ? (
+          <div className="mt-4 flex justify-center">{action}</div>
+        ) : null}
       </Empty>
     </Card>
   )

@@ -1,4 +1,5 @@
 import type { PhysicalAssessment } from '@/lib/data'
+import { findGoverningContract } from '@/lib/contracts-service'
 import { prisma } from '@/lib/prisma'
 import { parseIsoDate } from '@/lib/db-mappers'
 import { serializeAssessments } from '@/lib/serializers/student'
@@ -45,26 +46,14 @@ export async function createAssessmentRecord(
   const student = await prisma.student.findUnique({ where: { id: studentId } })
   if (!student) throw new Error('Aluno não encontrado')
 
-  const latest = await prisma.physicalAssessment.findFirst({
-    where: { studentId },
-    orderBy: { date: 'desc' },
-  })
+  const governing = await findGoverningContract(studentId)
+  if (!governing) {
+    throw new Error(
+      'Assine um contrato ativo antes de registrar avaliações',
+    )
+  }
 
-  const measures = input.measures ??
-    (latest
-      ? {
-          armRight: latest.armRight,
-          armLeft: latest.armLeft,
-          chest: latest.chest,
-          waist: latest.waist,
-          abdomen: latest.abdomen,
-          hip: latest.hip,
-          thighRight: latest.thighRight,
-          thighLeft: latest.thighLeft,
-          calfRight: latest.calfRight,
-          calfLeft: latest.calfLeft,
-        }
-      : emptyMeasures)
+  const measures = input.measures ?? emptyMeasures
 
   const created = await prisma.physicalAssessment.create({
     data: {
@@ -72,10 +61,10 @@ export async function createAssessmentRecord(
       date: parseIsoDate(
         input.date ?? new Date().toISOString().slice(0, 10),
       ),
-      weight: input.weight ?? latest?.weight ?? 0,
-      height: input.height ?? latest?.height ?? 1.65,
-      bodyFat: input.bodyFat ?? latest?.bodyFat ?? null,
-      muscleMass: input.muscleMass ?? latest?.muscleMass ?? null,
+      weight: input.weight ?? 0,
+      height: input.height ?? 0,
+      bodyFat: input.bodyFat ?? null,
+      muscleMass: input.muscleMass ?? null,
       ...measures,
     },
   })

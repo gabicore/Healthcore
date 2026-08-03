@@ -1,8 +1,11 @@
 import { NextRequest } from 'next/server'
+import { z } from 'zod'
 
 import { handleRouteError, jsonError, jsonOk } from '@/lib/api'
+import { requireSession } from '@/lib/auth/session'
+import { assertAdminPassword } from '@/lib/auth/services/user-service'
 import {
-  deactivateStudentRecord,
+  deleteStudentRecord,
   getStudentById,
   updateStudentRecord,
 } from '@/lib/students-service'
@@ -11,6 +14,10 @@ import { updateStudentSchema } from '@/lib/validations/student'
 type RouteContext = {
   params: Promise<{ id: string }>
 }
+
+const deleteStudentSchema = z.object({
+  adminPassword: z.string().min(1, 'Informe a senha do administrador'),
+})
 
 export async function GET(_request: NextRequest, context: RouteContext) {
   try {
@@ -49,12 +56,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: NextRequest, context: RouteContext) {
+export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
+    await requireSession()
     const { id } = await context.params
-    const updated = await deactivateStudentRecord(id)
-    if (!updated) return jsonError('Aluno não encontrado', 404)
-    return jsonOk(updated)
+    const body = await request.json().catch(() => ({}))
+    const { adminPassword } = deleteStudentSchema.parse(body)
+    await assertAdminPassword(adminPassword)
+
+    const deleted = await deleteStudentRecord(id)
+    if (!deleted) return jsonError('Aluno não encontrado', 404)
+    return jsonOk(deleted)
   } catch (error) {
     return handleRouteError(error)
   }

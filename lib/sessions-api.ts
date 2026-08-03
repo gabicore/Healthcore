@@ -17,6 +17,22 @@ export async function fetchStudentSessions(
   return parseJson<ClassSession[]>(response)
 }
 
+export async function fetchStudioSessions(params?: {
+  from?: string
+  to?: string
+  types?: string[]
+}): Promise<ClassSession[]> {
+  const search = new URLSearchParams()
+  if (params?.from) search.set('from', params.from)
+  if (params?.to) search.set('to', params.to)
+  if (params?.types?.length) search.set('types', params.types.join(','))
+  const qs = search.toString()
+  const response = await fetch(`/api/aulas${qs ? `?${qs}` : ''}`, {
+    cache: 'no-store',
+  })
+  return parseJson<ClassSession[]>(response)
+}
+
 export async function createStudentSession(
   studentId: string,
   input: {

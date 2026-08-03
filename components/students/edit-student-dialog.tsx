@@ -28,6 +28,10 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
+import { ActiveBadge } from '@/components/status-badges'
+import { maskCep, maskCpf, maskPhone, onlyDigits } from '@/lib/masks'
+import { composeAddress, lookupCep } from '@/lib/cep'
+import { composeEmergencyContact } from '@/lib/emergency-contact'
 import {
   formatCurrency,
   getPlan,
@@ -64,7 +68,15 @@ type EditableStudent = Pick<
   | 'phone'
   | 'email'
   | 'cep'
+  | 'street'
+  | 'addressNumber'
+  | 'neighborhood'
+  | 'city'
+  | 'state'
   | 'address'
+  | 'emergencyName'
+  | 'emergencyRelation'
+  | 'emergencyPhone'
   | 'emergencyContact'
   | 'active'
   | 'objective'
@@ -96,7 +108,15 @@ function toEditable(student: Student): EditableStudent {
     phone: student.phone,
     email: student.email,
     cep: student.cep,
+    street: student.street,
+    addressNumber: student.addressNumber,
+    neighborhood: student.neighborhood,
+    city: student.city,
+    state: student.state,
     address: student.address,
+    emergencyName: student.emergencyName,
+    emergencyRelation: student.emergencyRelation,
+    emergencyPhone: student.emergencyPhone,
     emergencyContact: student.emergencyContact,
     active: student.active,
     objective: student.objective,
@@ -189,6 +209,66 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
 
+  function updateAddressPart<
+    K extends
+      | 'street'
+      | 'addressNumber'
+      | 'neighborhood'
+      | 'city'
+      | 'state'
+      | 'cep',
+  >(key: K, value: string) {
+    setForm((prev) => {
+      const next = { ...prev, [key]: value }
+      next.address = composeAddress({
+        street: next.street,
+        addressNumber: next.addressNumber,
+        neighborhood: next.neighborhood,
+        city: next.city,
+        state: next.state,
+      })
+      return next
+    })
+  }
+
+  async function handleCepChange(raw: string) {
+    const masked = maskCep(raw)
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        cep: masked,
+        addressNumber: '',
+      }
+      next.address = composeAddress(next)
+      return next
+    })
+    if (onlyDigits(masked).length !== 8) return
+
+    const found = await lookupCep(masked)
+    if (!found) {
+      toast.info('CEP não localizado', {
+        description: 'Preencha rua, bairro, cidade, UF e o número.',
+      })
+      return
+    }
+
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        street: found.street || prev.street,
+        addressNumber: '',
+        neighborhood: found.neighborhood || prev.neighborhood,
+        city: found.city || prev.city,
+        state: found.state || prev.state,
+      }
+      next.address = composeAddress(next)
+      return next
+    })
+    toast.success('Endereço preenchido pelo CEP', {
+      description: 'Informe o número do endereço.',
+    })
+  }
+
   function handlePlanChange(planId: string) {
     const plan = getPlan(planId)
     setForm((prev) => ({
@@ -277,6 +357,15 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
       email: form.email.trim(),
       phone: form.phone.trim(),
       cpf: form.cpf.trim(),
+      address: composeAddress(form),
+      emergencyName: form.emergencyName.trim(),
+      emergencyRelation: form.emergencyRelation.trim(),
+      emergencyPhone: form.emergencyPhone.trim(),
+      emergencyContact: composeEmergencyContact({
+        name: form.emergencyName,
+        relation: form.emergencyRelation,
+        phone: form.emergencyPhone,
+      }),
     })
     setOpen(false)
     toast.success('Aluno atualizado')
@@ -363,8 +452,9 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                       <Input
                         id="edit-cpf"
                         value={form.cpf}
-                        onChange={(e) => update('cpf', e.target.value)}
+                        onChange={(e) => update('cpf', maskCpf(e.target.value))}
                         placeholder="000.000.000-00"
+                        inputMode="numeric"
                       />
                     </Field>
                     <Field>
@@ -372,7 +462,11 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                       <Input
                         id="edit-phone"
                         value={form.phone}
-                        onChange={(e) => update('phone', e.target.value)}
+                        onChange={(e) =>
+                          update('phone', maskPhone(e.target.value))
+                        }
+                        placeholder="(00) 00000-0000"
+                        inputMode="numeric"
                       />
                     </Field>
                   </div>
@@ -383,6 +477,7 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                       type="email"
                       value={form.email}
                       onChange={(e) => update('email', e.target.value)}
+                      placeholder="email@exemplo.com"
                     />
                   </Field>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -391,47 +486,123 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                       <Input
                         id="edit-cep"
                         value={form.cep}
-                        onChange={(e) => update('cep', e.target.value)}
+                        onChange={(e) => void handleCepChange(e.target.value)}
                         placeholder="00000-000"
+                        inputMode="numeric"
                       />
                     </Field>
                     <Field>
-                      <FieldLabel htmlFor="edit-address">Endereço</FieldLabel>
+                      <FieldLabel htmlFor="edit-number">Número</FieldLabel>
                       <Input
-                        id="edit-address"
-                        value={form.address}
-                        onChange={(e) => update('address', e.target.value)}
+                        id="edit-number"
+                        value={form.addressNumber}
+                        onChange={(e) =>
+                          updateAddressPart('addressNumber', e.target.value)
+                        }
+                        placeholder="Ex.: 609"
                       />
                     </Field>
                   </div>
                   <Field>
-                    <FieldLabel htmlFor="edit-emergency">
-                      Contato de emergência
-                    </FieldLabel>
+                    <FieldLabel htmlFor="edit-street">Rua</FieldLabel>
                     <Input
-                      id="edit-emergency"
-                      value={form.emergencyContact}
+                      id="edit-street"
+                      value={form.street}
                       onChange={(e) =>
-                        update('emergencyContact', e.target.value)
+                        updateAddressPart('street', e.target.value)
                       }
+                      placeholder="Nome da rua"
                     />
                   </Field>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <Field>
+                      <FieldLabel htmlFor="edit-neighborhood">Bairro</FieldLabel>
+                      <Input
+                        id="edit-neighborhood"
+                        value={form.neighborhood}
+                        onChange={(e) =>
+                          updateAddressPart('neighborhood', e.target.value)
+                        }
+                        placeholder="Bairro"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="edit-city">Cidade</FieldLabel>
+                      <Input
+                        id="edit-city"
+                        value={form.city}
+                        onChange={(e) =>
+                          updateAddressPart('city', e.target.value)
+                        }
+                        placeholder="Cidade"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="edit-state">UF</FieldLabel>
+                      <Input
+                        id="edit-state"
+                        value={form.state}
+                        onChange={(e) =>
+                          updateAddressPart(
+                            'state',
+                            e.target.value.trim().toUpperCase().slice(0, 2),
+                          )
+                        }
+                        placeholder="SP"
+                        maxLength={2}
+                      />
+                    </Field>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <Field>
+                      <FieldLabel htmlFor="edit-emergency-name">
+                        Contato de emergência
+                      </FieldLabel>
+                      <Input
+                        id="edit-emergency-name"
+                        value={form.emergencyName}
+                        onChange={(e) =>
+                          update('emergencyName', e.target.value)
+                        }
+                        placeholder="Nome completo"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="edit-emergency-relation">
+                        Parentesco
+                      </FieldLabel>
+                      <Input
+                        id="edit-emergency-relation"
+                        value={form.emergencyRelation}
+                        onChange={(e) =>
+                          update('emergencyRelation', e.target.value)
+                        }
+                        placeholder="Ex.: mãe, cônjuge"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="edit-emergency-phone">
+                        Telefone
+                      </FieldLabel>
+                      <Input
+                        id="edit-emergency-phone"
+                        value={form.emergencyPhone}
+                        onChange={(e) =>
+                          update('emergencyPhone', maskPhone(e.target.value))
+                        }
+                        placeholder="(00) 00000-0000"
+                        inputMode="numeric"
+                      />
+                    </Field>
+                  </div>
                   <Field>
                     <FieldLabel>Situação</FieldLabel>
-                    <Select
-                      value={form.active ? 'ativo' : 'inativo'}
-                      onValueChange={(v) => update('active', v === 'ativo')}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="ativo">Ativo</SelectItem>
-                          <SelectItem value="inativo">Inativo</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex h-8 items-center">
+                      <ActiveBadge active={hasActiveContract} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Definida pelo contrato ativo (não editável).
+                    </p>
                   </Field>
                 </FieldGroup>
               </TabsContent>

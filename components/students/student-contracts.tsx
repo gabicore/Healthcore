@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
   CheckCircle2,
   Eye,
@@ -23,18 +24,8 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
-  CardTitle,
 } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   Empty,
   EmptyDescription,
@@ -90,7 +81,6 @@ import {
 } from '@/lib/data'
 import {
   contractAction,
-  createContract,
   deleteContract,
   fetchStudentContracts,
   updateContract,
@@ -209,122 +199,7 @@ export function StudentContractsPanel({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState<EditForm | null>(null)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [createPlanId, setCreatePlanId] = useState(student.planId)
-  const [createDiscount, setCreateDiscount] = useState(student.discountPercent)
-  const [createStart, setCreateStart] = useState(toIsoDate(new Date()))
-  const [createEnd, setCreateEnd] = useState(toIsoDate(new Date()))
-  const [createDueDay, setCreateDueDay] = useState(student.dueDay)
-  const [createMethod, setCreateMethod] = useState<PaymentMethod>(
-    student.paymentMethod,
-  )
-  const [createResponsible, setCreateResponsible] = useState(student.name)
   const [busyAction, setBusyAction] = useState<string | null>(null)
-
-  const createPlan = useMemo(
-    () => plans.find((p) => p.id === createPlanId),
-    [plans, createPlanId],
-  )
-  const createMonthlyValue = useMemo(
-    () => studentChargedValue(createPlan, createDiscount),
-    [createPlan, createDiscount],
-  )
-  const createTotalClasses = useMemo(
-    () =>
-      createPlan && createStart && createEnd
-        ? contractTotalClasses({
-            startDate: createStart,
-            endDate: createEnd,
-            frequency: createPlan.frequency,
-            schedule: student.schedule,
-            planId: createPlan.id,
-          })
-        : 0,
-    [createPlan, createStart, createEnd, student.schedule],
-  )
-
-  useEffect(() => {
-    if (!createPlan || !createStart) return
-    setCreateEnd(contractEndDateForPeriod(createStart, createPlan.period))
-  }, [createPlan, createStart])
-
-  function resetCreateForm() {
-    const planId = student.planId || plans[0]?.id || ''
-    const start = toIsoDate(new Date())
-    const plan = plans.find((p) => p.id === planId)
-    setCreatePlanId(planId)
-    setCreateDiscount(student.discountPercent)
-    setCreateStart(start)
-    setCreateEnd(
-      plan
-        ? contractEndDateForPeriod(start, plan.period)
-        : contractEndDateForPeriod(start, 'mensal'),
-    )
-    setCreateDueDay(student.dueDay)
-    setCreateMethod(student.paymentMethod)
-    setCreateResponsible(student.name)
-  }
-
-  function openCreateDialog() {
-    if (activeContract) {
-      toast.error('Contrato ativo existente', {
-        description:
-          'Encerre ou rescinda o contrato ativo antes de criar um novo.',
-      })
-      return
-    }
-    resetCreateForm()
-    setCreateOpen(true)
-  }
-
-  async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    if (!createPlanId) {
-      toast.error('Selecione um plano')
-      return
-    }
-    if (!createStart || !createEnd) {
-      toast.error('Informe as datas de início e término')
-      return
-    }
-    if (createEnd < createStart) {
-      toast.error('A data de término deve ser após o início')
-      return
-    }
-
-    setCreating(true)
-    try {
-      const plan = plans.find((p) => p.id === createPlanId)
-      const created = await createContract(student.id, {
-        planId: createPlanId,
-        planLabel: plan
-          ? `${planPeriodLabel[plan.period]} · ${plan.frequencyLabel}`
-          : undefined,
-        startDate: createStart,
-        endDate: createEnd,
-        monthlyValue: createMonthlyValue,
-        discountPercent: Math.min(100, Math.max(0, createDiscount)),
-        dueDay: Math.min(28, Math.max(1, createDueDay)),
-        paymentMethod: createMethod,
-        financialResponsible: createResponsible.trim() || student.name,
-        status: 'rascunho',
-      })
-      setCreateOpen(false)
-      await loadContracts(true)
-      setSelectedId(created.id)
-      setEditing(false)
-      notify('Contrato criado', created.number)
-    } catch (err: unknown) {
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : 'Não foi possível criar o contrato',
-      )
-    } finally {
-      setCreating(false)
-    }
-  }
 
   async function loadContracts(notify = false) {
     const data = await fetchStudentContracts(student.id)
@@ -335,10 +210,7 @@ export function StudentContractsPanel({
 
   useEffect(() => {
     void fetchPlans()
-      .then((data) => {
-        setPlans(data)
-        setCreatePlanId((current) => current || student.planId || data[0]?.id || '')
-      })
+      .then(setPlans)
       .catch(() => {
         toast.error('Não foi possível carregar os planos')
       })
@@ -347,7 +219,7 @@ export function StudentContractsPanel({
       .catch(() => {
         /* contrato usa fallback se a API falhar */
       })
-  }, [student.planId])
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -766,33 +638,34 @@ export function StudentContractsPanel({
   return (
     <>
       <Card>
-        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
-          <div className="flex flex-col gap-1.5">
-            <CardTitle>Contratos</CardTitle>
-            <CardDescription>
-              Clique em um contrato para ver, editar ou apagar · histórico de{' '}
-              {student.name.split(' ')[0]}
-            </CardDescription>
-          </div>
-          <Button
-            size="sm"
-            onClick={openCreateDialog}
-            disabled={Boolean(activeContract)}
-            title={
-              activeContract
-                ? 'Encerre ou rescinda o contrato ativo para criar outro'
-                : undefined
-            }
-          >
-            <Plus data-icon="inline-start" />
-            Novo contrato
-          </Button>
+        <CardHeader className="flex flex-row items-center justify-end space-y-0">
+          {activeContract ? (
+            <Button
+              size="sm"
+              disabled
+              title="Encerre ou rescinda o contrato ativo para criar outro"
+            >
+              <Plus data-icon="inline-start" />
+              Novo contrato
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              nativeButton={false}
+              render={
+                <Link href={`/alunos/${student.id}/contratos/novo`} />
+              }
+            >
+              <Plus data-icon="inline-start" />
+              Novo contrato
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {activeContract ? (
             <p className="mb-4 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
-              Já existe um contrato ativo ({activeContract.number}). Para criar
-              um novo, encerre ou rescinda o atual.
+              Já existe um contrato ativo ({activeContract.number}). Para
+              criar um novo, encerre ou rescinda o atual.
             </p>
           ) : null}
           {loading ? (
@@ -803,23 +676,17 @@ export function StudentContractsPanel({
             </Empty>
           ) : list.length === 0 ? (
             <Empty className="border-0 py-8">
-              <EmptyHeader>
+              <EmptyHeader className="max-w-none text-center">
                 <EmptyMedia variant="icon">
-                  <FileText />
+                  <FileText className="size-6" />
                 </EmptyMedia>
-                <EmptyTitle>Nenhum contrato</EmptyTitle>
-                <EmptyDescription>
+                <EmptyTitle className="text-center">
+                  Nenhum contrato
+                </EmptyTitle>
+                <EmptyDescription className="whitespace-nowrap text-center">
                   Crie o primeiro contrato deste aluno para começar.
                 </EmptyDescription>
               </EmptyHeader>
-              <Button
-                size="sm"
-                onClick={openCreateDialog}
-                disabled={Boolean(activeContract)}
-              >
-                <Plus data-icon="inline-start" />
-                Novo contrato
-              </Button>
             </Empty>
           ) : (
             <Table>
@@ -862,181 +729,6 @@ export function StudentContractsPanel({
           )}
         </CardContent>
       </Card>
-
-      <Dialog
-        open={createOpen}
-        onOpenChange={(open) => {
-          setCreateOpen(open)
-          if (!open) resetCreateForm()
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Novo contrato</DialogTitle>
-            <DialogDescription>
-              O contrato será criado como rascunho para {student.name}, com as
-              cláusulas padrão do estúdio (editáveis depois).
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={(e) => void handleCreate(e)}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel>Plano</FieldLabel>
-                <Select
-                  value={createPlanId || null}
-                  onValueChange={(v) => {
-                    if (v) setCreatePlanId(v)
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Selecione um plano" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {plans.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {planPeriodLabel[p.period]} · {p.frequencyLabel} —{' '}
-                          {formatCurrency(p.price)}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <div className="grid grid-cols-2 gap-4">
-                <Field>
-                  <FieldLabel htmlFor="contract-start">Início</FieldLabel>
-                  <Input
-                    id="contract-start"
-                    type="date"
-                    value={createStart}
-                    onChange={(e) => setCreateStart(e.target.value)}
-                    required
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="contract-end">Término</FieldLabel>
-                  <Input
-                    id="contract-end"
-                    type="date"
-                    value={createEnd}
-                    readOnly
-                    className="bg-muted"
-                    required
-                  />
-                </Field>
-              </div>
-              {createPlan ? (
-                <p className="text-xs text-muted-foreground">
-                  {formatShortDate(createStart)} — {formatShortDate(createEnd)}{' '}
-                  · {planPeriodMonths(createPlan.period)}{' '}
-                  {planPeriodMonths(createPlan.period) === 1 ? 'mês' : 'meses'}{' '}
-                  · {createTotalClasses} aulas (
-                  {createPlan.frequencyLabel})
-                </p>
-              ) : null}
-              <div className="grid grid-cols-2 gap-4">
-                <Field>
-                  <FieldLabel htmlFor="contract-discount">
-                    Desconto (%)
-                  </FieldLabel>
-                  <Input
-                    id="contract-discount"
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={createDiscount}
-                    onChange={(e) =>
-                      setCreateDiscount(
-                        Math.min(100, Math.max(0, Number(e.target.value) || 0)),
-                      )
-                    }
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel>Valor final</FieldLabel>
-                  <Input
-                    value={formatCurrency(createMonthlyValue)}
-                    readOnly
-                    className="bg-muted"
-                  />
-                </Field>
-              </div>
-              {createPlan ? (
-                <p className="text-xs text-muted-foreground">
-                  Valor do plano {formatCurrency(createPlan.price)}
-                  {createDiscount > 0
-                    ? ` · desconto ${createDiscount}% → ${formatCurrency(createMonthlyValue)}`
-                    : null}
-                </p>
-              ) : null}
-              <div className="grid grid-cols-2 gap-4">
-                <Field>
-                  <FieldLabel htmlFor="contract-due">Dia de vencimento</FieldLabel>
-                  <Input
-                    id="contract-due"
-                    type="number"
-                    min={1}
-                    max={28}
-                    value={createDueDay}
-                    onChange={(e) =>
-                      setCreateDueDay(
-                        Math.min(28, Math.max(1, Number(e.target.value) || 1)),
-                      )
-                    }
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel>Forma de pagamento</FieldLabel>
-                  <Select
-                    value={createMethod}
-                    onValueChange={(v) => {
-                      if (v) setCreateMethod(v as PaymentMethod)
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {paymentMethods.map((m) => (
-                          <SelectItem key={m} value={m}>
-                            {m}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </div>
-              <Field>
-                <FieldLabel htmlFor="contract-responsible">
-                  Responsável financeiro
-                </FieldLabel>
-                <Input
-                  id="contract-responsible"
-                  value={createResponsible}
-                  onChange={(e) => setCreateResponsible(e.target.value)}
-                  placeholder={student.name}
-                />
-              </Field>
-            </FieldGroup>
-            <DialogFooter className="mt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setCreateOpen(false)}
-                disabled={creating}
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={creating || !createPlanId}>
-                {creating ? 'Criando…' : 'Criar contrato'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       <Sheet
         open={Boolean(selected)}

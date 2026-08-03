@@ -73,6 +73,8 @@ export async function syncStudentWithActiveContract(contract: DbContract) {
     await tx.student.update({
       where: { id: contract.studentId },
       data: {
+        active: true,
+        since: contract.startDate,
         planId: contract.planId,
         monthlyValue: decimalToNumber(contract.monthlyValue),
         discountPercent: contract.discountPercent,
@@ -91,6 +93,25 @@ export async function syncStudentWithActiveContract(contract: DbContract) {
   })
 }
 
+/** Agenda fixa só existe com contrato ativo. */
+export async function clearStudentFixedSchedule(studentId: string) {
+  await prisma.scheduleSlot.deleteMany({ where: { studentId } })
+}
+
+async function markStudentInactiveWithoutContract(studentId: string) {
+  const exists = await prisma.student.findUnique({
+    where: { id: studentId },
+    select: { id: true },
+  })
+  if (!exists) return
+
+  await clearStudentFixedSchedule(studentId)
+  await prisma.student.update({
+    where: { id: studentId },
+    data: { active: false },
+  })
+}
+
 /** Contrato assinado que governa plano/financeiro/agenda. Rascunhos são ignorados. */
 export async function findGoverningContract(studentId: string) {
   return prisma.contract.findFirst({
@@ -99,10 +120,22 @@ export async function findGoverningContract(studentId: string) {
   })
 }
 
-/** Garante que o aluno reflita o contrato ativo (assinado), se houver. */
+/**
+ * Garante que o aluno reflita o contrato ativo (assinado), se houver.
+ * Sem contrato ativo, limpa a agenda fixa e marca como inativo.
+ */
 export async function syncStudentFromActiveContract(studentId: string) {
+  const student = await prisma.student.findUnique({
+    where: { id: studentId },
+    select: { id: true },
+  })
+  if (!student) return null
+
   const active = await findGoverningContract(studentId)
-  if (!active) return null
+  if (!active) {
+    await markStudentInactiveWithoutContract(studentId)
+    return null
+  }
   await syncStudentWithActiveContract(active)
   return active
 }
@@ -349,6 +382,8 @@ export async function updateContractRecord(
 
   const statusBecameActive =
     updated.status === 'ativo' && existing.status !== 'ativo'
+  const statusLeftActive =
+    existing.status === 'ativo' && updated.status !== 'ativo'
 
   if (statusBecameActive) {
     await endOtherActiveContracts(updated.studentId, updated.id)
@@ -357,6 +392,12 @@ export async function updateContractRecord(
   // Só contrato assinado (ativo) espelha financeiro e agenda.
   if (updated.status === 'ativo') {
     await syncStudentWithActiveContract(updated)
+  } else if (statusLeftActive) {
+    // Sem outro ativo, agenda fixa some e o aluno fica inativo.
+    const stillActive = await findGoverningContract(updated.studentId)
+    if (!stillActive) {
+      await markStudentInactiveWithoutContract(updated.studentId)
+    }
   }
 
   return serializeContract(updated)

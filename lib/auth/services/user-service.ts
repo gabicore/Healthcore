@@ -4,6 +4,7 @@ import type { UserRole } from '@prisma/client'
 import { AppError } from '@/lib/api'
 import { toPublicUser } from '@/lib/auth/dto/user'
 import { hashPassword, verifyPassword } from '@/lib/auth/password'
+import { ADMIN_ROLES } from '@/lib/auth/permissions'
 import {
   accountRepository,
   authAuditRepository,
@@ -101,6 +102,47 @@ export async function changePassword(
   })
 
   return { ok: true as const }
+}
+
+/** Confirma que a senha corresponde a um administrador ativo (ADMIN / SUPER_ADMIN). */
+export async function assertAdminPassword(password: string) {
+  const trimmed = password.trim()
+  if (!trimmed) {
+    throw new AppError(
+      'Informe a senha do administrador',
+      400,
+      'ADMIN_PASSWORD_REQUIRED',
+    )
+  }
+
+  const admins = await prisma.user.findMany({
+    where: {
+      role: { in: ADMIN_ROLES },
+      status: 'ACTIVE',
+    },
+    include: {
+      accounts: {
+        where: { providerId: 'credential' },
+        select: { password: true },
+      },
+    },
+  })
+
+  for (const admin of admins) {
+    if (userRepository.isLocked(admin)) continue
+    for (const account of admin.accounts) {
+      if (!account.password) continue
+      if (await verifyPassword(account.password, trimmed)) {
+        return { id: admin.id, email: admin.email }
+      }
+    }
+  }
+
+  throw new AppError(
+    'Senha do administrador incorreta',
+    403,
+    'INVALID_ADMIN_PASSWORD',
+  )
 }
 
 export async function listUserSessions(userId: string, currentToken?: string) {

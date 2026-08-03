@@ -27,6 +27,12 @@ type StudentWithRelations = DbStudent & {
   assessments?: DbAssessment[]
   evolutions?: DbEvolution[]
   photos?: DbPhoto[]
+  contracts?: Array<{
+    status: string
+    planId: string
+    planLabel: string
+    startDate: Date
+  }>
 }
 
 export function serializeSchedule(slots: DbSchedule[] = []): ScheduleSlot[] {
@@ -53,26 +59,34 @@ export function serializePayments(payments: DbPayment[] = []): Payment[] {
 export function serializeAssessments(
   assessments: DbAssessment[] = [],
 ): PhysicalAssessment[] {
-  return assessments.map((assessment) => ({
-    id: assessment.id,
-    date: toIsoDateOnly(assessment.date),
-    weight: assessment.weight,
-    height: assessment.height,
-    bodyFat: assessment.bodyFat ?? undefined,
-    muscleMass: assessment.muscleMass ?? undefined,
-    measures: {
-      armRight: assessment.armRight,
-      armLeft: assessment.armLeft,
-      chest: assessment.chest,
-      waist: assessment.waist,
-      abdomen: assessment.abdomen,
-      hip: assessment.hip,
-      thighRight: assessment.thighRight,
-      thighLeft: assessment.thighLeft,
-      calfRight: assessment.calfRight,
-      calfLeft: assessment.calfLeft,
-    },
-  }))
+  return assessments.map((assessment) => {
+    // Registros antigos em metros (< 3) são lidos como cm.
+    const height =
+      assessment.height > 0 && assessment.height < 3
+        ? Math.round(assessment.height * 1000) / 10
+        : assessment.height
+
+    return {
+      id: assessment.id,
+      date: toIsoDateOnly(assessment.date),
+      weight: assessment.weight,
+      height,
+      bodyFat: assessment.bodyFat ?? undefined,
+      muscleMass: assessment.muscleMass ?? undefined,
+      measures: {
+        armRight: assessment.armRight,
+        armLeft: assessment.armLeft,
+        chest: assessment.chest,
+        waist: assessment.waist,
+        abdomen: assessment.abdomen,
+        hip: assessment.hip,
+        thighRight: assessment.thighRight,
+        thighLeft: assessment.thighLeft,
+        calfRight: assessment.calfRight,
+        calfLeft: assessment.calfLeft,
+      },
+    }
+  })
 }
 
 export function serializeEvolutions(
@@ -100,6 +114,10 @@ export function serializePhotos(photos: DbPhoto[] = []): EvolutionPhoto[] {
 }
 
 export function serializeStudent(student: StudentWithRelations): Student {
+  const activeContract =
+    student.contracts?.find((c) => c.status === 'ativo') ?? null
+  const hasActiveContract = Boolean(activeContract)
+
   return {
     id: student.id,
     name: student.name,
@@ -109,10 +127,23 @@ export function serializeStudent(student: StudentWithRelations): Student {
     phone: student.phone,
     email: student.email,
     cep: student.cep,
+    street: student.street,
+    addressNumber: student.addressNumber,
+    neighborhood: student.neighborhood,
+    city: student.city,
+    state: student.state,
     address: student.address,
+    emergencyName: student.emergencyName,
+    emergencyRelation: student.emergencyRelation,
+    emergencyPhone: student.emergencyPhone,
     emergencyContact: student.emergencyContact,
-    active: student.active,
-    since: toIsoDateOnly(student.since),
+    active: hasActiveContract,
+    hasActiveContract,
+    activePlanLabel: activeContract?.planLabel || undefined,
+    // Sempre alinhado ao início do contrato ativo, quando houver.
+    since: activeContract
+      ? toIsoDateOnly(activeContract.startDate)
+      : toIsoDateOnly(student.since),
     objective: student.objective,
     pathologies: student.pathologies,
     injuries: student.injuries,
@@ -120,13 +151,17 @@ export function serializeStudent(student: StudentWithRelations): Student {
     restrictions: student.restrictions,
     medications: student.medications,
     notes: student.notes,
-    planId: student.planId,
-    monthlyValue: decimalToNumber(student.monthlyValue),
-    discountPercent: student.discountPercent,
+    planId: hasActiveContract
+      ? (activeContract?.planId ?? student.planId)
+      : '',
+    monthlyValue: hasActiveContract
+      ? decimalToNumber(student.monthlyValue)
+      : 0,
+    discountPercent: hasActiveContract ? student.discountPercent : 0,
     dueDay: student.dueDay,
     paymentMethod: fromDbPaymentMethod(student.paymentMethod),
-    schedule: serializeSchedule(student.schedule),
-    payments: serializePayments(student.payments),
+    schedule: hasActiveContract ? serializeSchedule(student.schedule) : [],
+    payments: hasActiveContract ? serializePayments(student.payments) : [],
     assessments: serializeAssessments(student.assessments),
     evolutions: serializeEvolutions(student.evolutions),
     photos: serializePhotos(student.photos),
@@ -139,4 +174,15 @@ export const studentDetailInclude = {
   assessments: { orderBy: { date: 'desc' as const } },
   evolutions: { orderBy: { date: 'desc' as const } },
   photos: { orderBy: { date: 'desc' as const } },
+  contracts: {
+    where: { status: 'ativo' as const },
+    orderBy: { startDate: 'desc' as const },
+    take: 1,
+    select: {
+      status: true,
+      planId: true,
+      planLabel: true,
+      startDate: true,
+    },
+  },
 }

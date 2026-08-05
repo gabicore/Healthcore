@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts'
 import {
+  History,
   CalendarClock,
   ChevronLeft,
   ChevronRight,
@@ -28,6 +29,7 @@ import { toast } from 'sonner'
 import { InlineField } from '@/components/students/inline-field'
 import { DeleteStudentDialog } from '@/components/students/delete-student-dialog'
 import { PersonalDataPanel } from '@/components/students/personal-data-panel'
+import { StudentHistoryPanel } from '@/components/students/student-history-panel'
 import { StudentAttendancePanel } from '@/components/students/student-attendance'
 import { StudentContractsPanel } from '@/components/students/student-contracts'
 import { StudentFixedScheduleCard } from '@/components/students/student-fixed-schedule-card'
@@ -663,6 +665,10 @@ export function StudentProfile({
                 <CalendarClock data-icon="inline-start" />
                 Agenda
               </TabsTrigger>
+              <TabsTrigger value="historico">
+                <History data-icon="inline-start" />
+                Histórico
+              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -1136,7 +1142,7 @@ export function StudentProfile({
                           <ActiveBadge active={hasSignedContract} />
                       <PaymentStatusSelect
                         value={studentPaymentStatus(student)}
-                        aria-label="Status financeiro do aluno"
+                        aria-label="Status financeiro da pessoa"
                         onChange={(status) => {
                           void (async () => {
                             const sorted = [...student.payments].sort((a, b) =>
@@ -1356,6 +1362,15 @@ export function StudentProfile({
               />
             ) : (
               <>
+                <StudentFixedScheduleCard
+                  schedule={student.schedule}
+                  weeklyLimit={effectiveWeeklyLimit}
+                  contractStart={governingContract!.startDate}
+                  contractEnd={governingContract!.endDate}
+                  onRegister={registerSchedulePeriod}
+                  onDeletePeriod={deleteSchedulePeriod}
+                />
+
                 <StudentAttendancePanel
                   studentId={student.id}
                   schedule={student.schedule}
@@ -1365,17 +1380,12 @@ export function StudentProfile({
                   historyTo={governingContract!.endDate}
                   plans={plans}
                 />
-
-                <StudentFixedScheduleCard
-                  schedule={student.schedule}
-                  weeklyLimit={effectiveWeeklyLimit}
-                  contractStart={governingContract!.startDate}
-                  contractEnd={governingContract!.endDate}
-                  onRegister={registerSchedulePeriod}
-                  onDeletePeriod={deleteSchedulePeriod}
-                />
               </>
             )}
+          </TabsContent>
+
+          <TabsContent value="historico" className="flex flex-col gap-4">
+            <StudentHistoryPanel student={student} />
           </TabsContent>
         </Tabs>
       </div>

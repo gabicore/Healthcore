@@ -439,9 +439,6 @@ export function CampaignsPage() {
     }
   }
 
-  const running = campaigns.filter((c) => c.status === 'em_andamento').length
-  const scheduled = campaigns.filter((c) => c.status === 'agendada').length
-
   const birthdays = useMemo(
     () =>
       [...students]
@@ -456,7 +453,7 @@ export function CampaignsPage() {
     <>
       <PageHeader
         title="Campanhas"
-        description="Comunicação e marketing com alunos e responsáveis"
+        description="Comunicação e marketing com pessoas e responsáveis"
       >
         <Button size="sm" onClick={openCreate}>
           <Plus data-icon="inline-start" />
@@ -465,27 +462,6 @@ export function CampaignsPage() {
       </PageHeader>
 
       <div className="flex flex-col gap-6 p-4 md:p-6">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">Total</p>
-              <p className="text-2xl font-semibold">{campaigns.length}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">Em andamento</p>
-              <p className="text-2xl font-semibold">{running}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">Agendadas</p>
-              <p className="text-2xl font-semibold">{scheduled}</p>
-            </CardContent>
-          </Card>
-        </div>
-
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-2">
             <div className="flex flex-col gap-1">
@@ -499,7 +475,7 @@ export function CampaignsPage() {
           <CardContent className="flex flex-col gap-1">
             {birthdays.length === 0 ? (
               <p className="py-2 text-sm text-muted-foreground">
-                Nenhum aniversário próximo entre alunos ativos.
+                Nenhum aniversário próximo entre pessoas ativas.
               </p>
             ) : (
               birthdays.map(({ student, days }) => (
@@ -534,10 +510,6 @@ export function CampaignsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Campanhas da instituição</CardTitle>
-            <CardDescription>
-              Use Nome para renomear, Editar para alterar tudo e Excluir para
-              remover
-            </CardDescription>
           </CardHeader>
           <CardContent>
             {campaigns.length === 0 ? (

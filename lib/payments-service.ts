@@ -37,7 +37,7 @@ export async function createPaymentRecord(
   input: CreatePaymentInput,
 ) {
   const student = await prisma.student.findUnique({ where: { id: studentId } })
-  if (!student) throw new Error('Aluno não encontrado')
+  if (!student) throw new Error('Pessoa não encontrada')
 
   const status = input.status ?? 'pendente'
   const method =

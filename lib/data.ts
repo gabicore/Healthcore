@@ -34,13 +34,23 @@ export type AttendanceStatus =
 export type PlanPeriod = 'mensal' | 'trimestral' | 'semestral'
 export type PlanFrequency = 1 | 2 | 3
 
+export type PlanKind = 'mensalidade' | 'pacote' | 'avulso'
+
+export const planKindLabel: Record<PlanKind, string> = {
+  mensalidade: 'Mensalidade',
+  pacote: 'Pacote',
+  avulso: 'Avulso',
+}
+
 export type Plan = {
   id: string
   name: string
+  kind: PlanKind
   period: PlanPeriod
   frequency: PlanFrequency
   frequencyLabel: string
   price: number
+  sessionsTotal?: number | null
 }
 
 export type Professional = {
@@ -274,6 +284,8 @@ export type Student = {
   restrictions: string
   medications: string
   notes: string
+  usesPilates?: boolean
+  usesClinic?: boolean
   // Financeiro
   planId: string
   /** Valor cobrado do aluno (após desconto individual). */
@@ -396,6 +408,7 @@ export const plans: Plan[] = [
   // 1 aula por semana
   {
     id: 'sem-1x',
+    kind: 'mensalidade',
     name: 'Semestral · 1 aula por semana',
     period: 'semestral',
     frequency: 1,
@@ -404,6 +417,7 @@ export const plans: Plan[] = [
   },
   {
     id: 'tri-1x',
+    kind: 'mensalidade',
     name: 'Trimestral · 1 aula por semana',
     period: 'trimestral',
     frequency: 1,
@@ -412,6 +426,7 @@ export const plans: Plan[] = [
   },
   {
     id: 'men-1x',
+    kind: 'mensalidade',
     name: 'Mensal · 1 aula por semana',
     period: 'mensal',
     frequency: 1,
@@ -421,6 +436,7 @@ export const plans: Plan[] = [
   // 2 aulas por semana
   {
     id: 'sem-2x',
+    kind: 'mensalidade',
     name: 'Semestral · 2 aulas por semana',
     period: 'semestral',
     frequency: 2,
@@ -429,6 +445,7 @@ export const plans: Plan[] = [
   },
   {
     id: 'tri-2x',
+    kind: 'mensalidade',
     name: 'Trimestral · 2 aulas por semana',
     period: 'trimestral',
     frequency: 2,
@@ -437,6 +454,7 @@ export const plans: Plan[] = [
   },
   {
     id: 'men-2x',
+    kind: 'mensalidade',
     name: 'Mensal · 2 aulas por semana',
     period: 'mensal',
     frequency: 2,
@@ -446,6 +464,7 @@ export const plans: Plan[] = [
   // 3 aulas por semana
   {
     id: 'sem-3x',
+    kind: 'mensalidade',
     name: 'Semestral · 3 aulas por semana',
     period: 'semestral',
     frequency: 3,
@@ -454,6 +473,7 @@ export const plans: Plan[] = [
   },
   {
     id: 'tri-3x',
+    kind: 'mensalidade',
     name: 'Trimestral · 3 aulas por semana',
     period: 'trimestral',
     frequency: 3,
@@ -462,6 +482,7 @@ export const plans: Plan[] = [
   },
   {
     id: 'men-3x',
+    kind: 'mensalidade',
     name: 'Mensal · 3 aulas por semana',
     period: 'mensal',
     frequency: 3,
@@ -710,7 +731,7 @@ export function removeTimeSlot(
   if (inUse) {
     return {
       ok: false,
-      error: 'Horário em uso na agenda fixa de alunos',
+      error: 'Horário em uso na agenda fixa de pessoas',
     }
   }
   const morningIndex = morningSlots.indexOf(time)
@@ -1366,6 +1387,211 @@ export const students: Student[] = [
       { id: 'pay16', reference: 'Julho/2026', dueDate: '2026-07-25', amount: 350, status: 'pago', method: 'Cartão de crédito', paidAt: '2026-07-24' },
     ],
   },
+  {
+    id: 's-exemplo',
+    name: 'Helena Duarte Nogueira',
+    birthDate: '1987-03-14',
+    sex: 'Feminino',
+    cpf: '456.789.123-45',
+    phone: '(11) 98765-4321',
+    email: 'helena.nogueira@email.com',
+    cep: '05422-001',
+    street: 'Rua Teodoro Sampaio',
+    addressNumber: '1820',
+    neighborhood: 'Pinheiros',
+    city: 'São Paulo',
+    state: 'SP',
+    address: 'Rua Teodoro Sampaio, 1820 — Pinheiros, São Paulo/SP',
+    emergencyName: 'Ricardo Nogueira',
+    emergencyRelation: 'esposo',
+    emergencyPhone: '(11) 99654-3210',
+    emergencyContact: 'Ricardo Nogueira (esposo) — (11) 99654-3210',
+    active: true,
+    hasActiveContract: true,
+    activePlanLabel: 'Semestral · 2 aulas por semana',
+    since: '2025-01-15',
+    usesPilates: true,
+    usesClinic: true,
+    objective:
+      'Fortalecimento global no Pilates e reabilitação fisioterapêutica de ombro direito pós-tendinopatia.',
+    pathologies:
+      'Tendinopatia do supraespinhal (ombro D), cervicalgia crônica, leve hipercifose torácica.',
+    injuries:
+      'Lesão por esforço repetitivo no ombro direito (2024). Entorse de tornozelo esquerdo em 2021.',
+    surgeries: 'Nenhuma.',
+    restrictions:
+      'Evitar elevação acima de 90° com carga no ombro D nas primeiras semanas; progressão orientada pela fisioterapeuta.',
+    medications:
+      'Analgésico sob demanda em crises; uso eventual de anti-inflamatório conforme orientação médica.',
+    notes:
+      'Perfil exemplo completo (Pilates + Fisioterapia). Designer gráfica, passa muitas horas no computador. Prefere Pilates às terças/quintas e fisioterapia às sextas pela manhã.',
+    planId: 'sem-2x',
+    monthlyValue: 350,
+    discountPercent: 0,
+    dueDay: 15,
+    paymentMethod: 'PIX',
+    schedule: [
+      { weekday: 'Terça', time: '09:00' },
+      { weekday: 'Quinta', time: '09:00' },
+    ],
+    assessments: [
+      assessment(
+        'a-ex1',
+        '2025-01-20',
+        62.5,
+        1.68,
+        {
+          armRight: 27,
+          armLeft: 27.5,
+          chest: 86,
+          waist: 71,
+          abdomen: 78,
+          hip: 96,
+          thighRight: 54,
+          thighLeft: 54.5,
+          calfRight: 34.5,
+          calfLeft: 35,
+        },
+        28,
+        23.5,
+      ),
+      assessment(
+        'a-ex2',
+        '2025-07-15',
+        61,
+        1.68,
+        {
+          armRight: 28,
+          armLeft: 28,
+          chest: 85,
+          waist: 69,
+          abdomen: 75,
+          hip: 95,
+          thighRight: 55,
+          thighLeft: 55,
+          calfRight: 35,
+          calfLeft: 35,
+        },
+        25.5,
+        25,
+      ),
+      assessment(
+        'a-ex3',
+        '2026-01-20',
+        60.5,
+        1.68,
+        {
+          armRight: 28.5,
+          armLeft: 28.5,
+          chest: 85,
+          waist: 68,
+          abdomen: 74,
+          hip: 94.5,
+          thighRight: 55.5,
+          thighLeft: 55.5,
+          calfRight: 35,
+          calfLeft: 35,
+        },
+        24,
+        26,
+      ),
+    ],
+    evolutions: [
+      {
+        id: 'e-ex1',
+        date: '2026-07-22',
+        professional: 'Dra. Camila Rezende',
+        clinical:
+          'Sessão de fisioterapia: redução da dor no ombro D (EVA 2/10). Boa adesão aos exercícios domiciliares.',
+        complaints: 'Leve tensão cervical ao final do expediente.',
+        improvements:
+          'Amplitude de abdução e flexão do ombro D próximas do lado contralateral.',
+        exercises:
+          'Isometria de manguito, scaption com elástico leve, mobilização escapular e alongamento peitoral.',
+        conduct:
+          'Manter fisioterapia 1x/semana e Pilates 2x/semana; liberar progressão de carga no Reformer sob supervisão.',
+      },
+      {
+        id: 'e-ex2',
+        date: '2026-07-17',
+        professional: 'Rafael Monteiro',
+        clinical:
+          'Aula de Pilates: boa estabilização de core; ombro D sem queixa durante séries adaptadas.',
+        complaints: 'Cansaço leve em extensão de tronco.',
+        improvements: 'Controle de respiração e alinhamento pélvico.',
+        exercises:
+          'Footwork, Hundred modificado, Side Kick Series e Bridging com foco em glúteos.',
+        conduct: 'Incluir variação de braços sem elevação forçada acima da linha dos olhos.',
+      },
+      {
+        id: 'e-ex3',
+        date: '2026-06-10',
+        professional: 'Dra. Camila Rezende',
+        clinical:
+          'Avaliação de retorno: quadro inflamatório estabilizado; liberada para intensificar Pilates.',
+        complaints: 'Dor residual 3/10 em movimentos rápidos de alcance.',
+        improvements: 'Força de manguito e propriocepção melhoradas.',
+        exercises: 'Protocolo de reabilitação fase 3 + alongamento cervical.',
+        conduct: 'Reavaliação em 45 dias; manter gelo pós-esforço se necessário.',
+      },
+    ],
+    photos: [
+      {
+        id: 'ph-ex1',
+        date: '2025-01-20',
+        label: 'Avaliação inicial — postura',
+        url: '/evolution-posture-side-view-neutral-studio.jpg',
+      },
+      {
+        id: 'ph-ex2',
+        date: '2025-07-15',
+        label: '6 meses — postura',
+        url: '/evolution-posture-side-view-improved-studio.jpg',
+      },
+      {
+        id: 'ph-ex3',
+        date: '2026-01-20',
+        label: '1 ano — ombro / postura',
+        url: '/evolution-posture-side-view-improved-studio.jpg',
+      },
+    ],
+    payments: [
+      {
+        id: 'pay-ex1',
+        reference: 'Maio/2026',
+        dueDate: '2026-05-15',
+        amount: 350,
+        status: 'pago',
+        method: 'PIX',
+        paidAt: '2026-05-14',
+      },
+      {
+        id: 'pay-ex2',
+        reference: 'Junho/2026',
+        dueDate: '2026-06-15',
+        amount: 350,
+        status: 'pago',
+        method: 'PIX',
+        paidAt: '2026-06-13',
+      },
+      {
+        id: 'pay-ex3',
+        reference: 'Julho/2026',
+        dueDate: '2026-07-15',
+        amount: 350,
+        status: 'pago',
+        method: 'PIX',
+        paidAt: '2026-07-15',
+      },
+      {
+        id: 'pay-ex4',
+        reference: 'Agosto/2026',
+        dueDate: '2026-08-15',
+        amount: 350,
+        status: 'pendente',
+      },
+    ],
+  },
 ]
 
 // ------- Contratos (vinculados ao aluno) -------
@@ -1454,6 +1680,47 @@ export const contracts: Contract[] = [
     ],
     createdAt: '2025-06-20',
     updatedAt: '2025-12-31',
+  },
+  {
+    id: 'c-s-exemplo-2026',
+    studentId: 's-exemplo',
+    number: '#2026-EX1',
+    planId: 'sem-2x',
+    planLabel: 'Semestral · 2 aulas por semana',
+    startDate: '2026-01-15',
+    endDate: '2026-07-14',
+    status: 'ativo',
+    monthlyValue: 350,
+    discountPercent: 0,
+    dueDay: 15,
+    paymentMethod: 'PIX',
+    financialResponsible: 'Helena Duarte Nogueira',
+    lateFeePercent: 2,
+    interestPercent: 1,
+    clauses: [...defaultContractClauses],
+    signedAt: '2026-01-10',
+    signatureName: 'Helena Duarte Nogueira',
+    version: 1,
+    previousVersions: [],
+    history: [
+      {
+        at: '2026-01-08',
+        action: 'Contrato criado (rascunho)',
+        by: 'Dra. Camila Rezende',
+      },
+      {
+        at: '2026-01-10',
+        action: 'Assinado digitalmente',
+        by: 'Helena Duarte Nogueira',
+      },
+      {
+        at: '2026-01-15',
+        action: 'Contrato ativado',
+        by: 'Sistema',
+      },
+    ],
+    createdAt: '2026-01-08',
+    updatedAt: '2026-01-15',
   },
   {
     id: 'c-s2-2026',
@@ -1636,7 +1903,7 @@ export const contracts: Contract[] = [
       },
       {
         at: '2026-01-10',
-        action: 'Contrato rescindido a pedido do aluno',
+        action: 'Contrato rescindido a pedido da pessoa',
         by: 'Dra. Camila Rezende',
       },
     ],
@@ -1860,9 +2127,9 @@ export const campaignStatusLabel: Record<CampaignStatus, string> = {
 }
 
 export const campaignAudienceLabel: Record<CampaignAudience, string> = {
-  todos: 'Todos os alunos',
-  ativos: 'Alunos ativos',
-  inativos: 'Alunos inativos',
+  todos: 'Todas as pessoas',
+  ativos: 'Pessoas ativas',
+  inativos: 'Pessoas inativas',
   aniversariantes: 'Aniversariantes do mês',
   inadimplentes: 'Inadimplentes',
   responsaveis: 'Responsáveis financeiros',
@@ -1939,7 +2206,7 @@ export const campaigns: Campaign[] = [
     type: 'eventos',
     channel: 'email',
     audience: 'ativos',
-    audienceLabel: 'Alunos ativos',
+    audienceLabel: 'Pessoas ativas',
     startDate: '2026-08-05',
     scheduledAt: '2026-08-01T09:00',
     status: 'agendada',
@@ -1973,11 +2240,11 @@ export const campaigns: Campaign[] = [
   },
   {
     id: 'camp-4',
-    name: 'Reativação — alunos inativos',
+    name: 'Reativação — pessoas inativas',
     type: 'reativacao',
     channel: 'email',
     audience: 'inativos',
-    audienceLabel: 'Alunos inativos',
+    audienceLabel: 'Pessoas inativas',
     startDate: '2026-07-15',
     status: 'pausada',
     messageTemplate: campaignMessageTemplates[2].body,
@@ -2308,6 +2575,7 @@ export function createPlan(input?: Partial<Omit<Plan, 'id'>>): Plan {
   const frequency = (input?.frequency ?? 1) as PlanFrequency
   const plan: Plan = {
     id: `plan-${Date.now()}`,
+    kind: input?.kind ?? 'mensalidade',
     period,
     frequency,
     frequencyLabel: frequencyLabelFor(frequency),
@@ -2315,6 +2583,7 @@ export function createPlan(input?: Partial<Omit<Plan, 'id'>>): Plan {
       input?.name?.trim() ||
       `${planPeriodLabel[period]} · ${frequencyLabelFor(frequency)}`,
     price: input?.price ?? 0,
+    sessionsTotal: input?.sessionsTotal ?? null,
   }
   plans.push(plan)
   return plan
@@ -2326,7 +2595,7 @@ export function removePlan(id: string): { ok: true } | { ok: false; error: strin
   }
   const inUse = students.some((s) => s.planId === id)
   if (inUse) {
-    return { ok: false, error: 'Plano em uso por alunos cadastrados' }
+    return { ok: false, error: 'Plano em uso por pessoas cadastradas' }
   }
   const index = plans.findIndex((p) => p.id === id)
   if (index < 0) return { ok: false, error: 'Plano não encontrado' }
@@ -3743,6 +4012,11 @@ export function getMakeupAllowance(
   // FIFO: as primeiras faltas/cancelamentos são cobertas pelas reposições efetivas.
   const pendingMissed = missedSessions.slice(used)
   const coveredMissed = missedSessions.slice(0, used)
+  const makeupByMissedId: Record<string, ClassSession> = {}
+  coveredMissed.forEach((missed, index) => {
+    const makeup = usedSessions[index]
+    if (makeup) makeupByMissedId[missed.id] = makeup
+  })
 
   return {
     missed,
@@ -3752,6 +4026,7 @@ export function getMakeupAllowance(
     coveredMissed,
     failedMakeups,
     makeups: usedSessions,
+    makeupByMissedId,
   }
 }
 

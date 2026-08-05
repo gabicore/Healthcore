@@ -1,10 +1,12 @@
 import 'dotenv/config'
 import { PrismaClient, type Prisma } from '@prisma/client'
 import {
+  addDays,
   afternoonSlots,
   campaigns,
   contracts,
   expenses,
+  getMonday,
   morningSlots,
   plans,
   professionals,
@@ -12,6 +14,9 @@ import {
   students,
   studio,
   studioHours,
+  toIsoDate,
+  weekdays,
+  type Weekday,
 } from '../lib/data'
 import {
   parseIsoDate,
@@ -25,6 +30,7 @@ async function main() {
   console.log('Seeding HealthCore...')
 
   await prisma.classSession.deleteMany()
+  await prisma.clinicalAttendance.deleteMany()
   await prisma.campaign.deleteMany()
   await prisma.contract.deleteMany()
   await prisma.expense.deleteMany()
@@ -39,6 +45,8 @@ async function main() {
   await prisma.verification.deleteMany()
   await prisma.user.deleteMany()
   await prisma.student.deleteMany()
+  await prisma.inventoryProduct.deleteMany()
+  await prisma.service.deleteMany()
   await prisma.timeSlot.deleteMany()
   await prisma.studioHour.deleteMany()
   await prisma.professional.deleteMany()
@@ -81,6 +89,66 @@ async function main() {
         role: professional.role,
         registration: professional.registration,
         email: professional.email,
+      },
+    })
+  }
+
+  const clinicalServices = [
+    {
+      id: 'svc-fisioterapia',
+      name: 'Fisioterapia',
+      category: 'fisioterapia' as const,
+      durationMinutes: 60,
+      requiresInitialAssessment: true,
+      requiresEvolution: true,
+    },
+    {
+      id: 'svc-massoterapia',
+      name: 'Massoterapia',
+      category: 'massoterapia' as const,
+      durationMinutes: 60,
+      requiresInitialAssessment: false,
+      requiresEvolution: false,
+    },
+    {
+      id: 'svc-auriculoterapia',
+      name: 'Auriculoterapia',
+      category: 'auriculoterapia' as const,
+      durationMinutes: 45,
+      requiresInitialAssessment: false,
+      requiresEvolution: true,
+    },
+    {
+      id: 'svc-avaliacao',
+      name: 'Avaliação',
+      category: 'avaliacao' as const,
+      durationMinutes: 60,
+      requiresInitialAssessment: false,
+      requiresEvolution: false,
+    },
+    {
+      id: 'svc-experimental',
+      name: 'Sessão experimental',
+      category: 'experimental' as const,
+      durationMinutes: 50,
+      requiresInitialAssessment: false,
+      requiresEvolution: false,
+    },
+  ]
+
+  for (const service of clinicalServices) {
+    await prisma.service.create({
+      data: {
+        id: service.id,
+        studioId: studioRow.id,
+        name: service.name,
+        category: service.category,
+        durationMinutes: service.durationMinutes,
+        price: 0,
+        requiresInitialAssessment: service.requiresInitialAssessment,
+        requiresEvolution: service.requiresEvolution,
+        active: true,
+        professionalId: service.category === 'fisioterapia' ? 'prof1' : null,
       },
     })
   }
@@ -149,6 +217,8 @@ async function main() {
         restrictions: student.restrictions,
         medications: student.medications,
         notes: student.notes,
+        usesPilates: student.usesPilates !== false,
+        usesClinic: Boolean(student.usesClinic),
         planId: student.planId,
         monthlyValue: student.monthlyValue,
         discountPercent: student.discountPercent ?? 0,
@@ -215,6 +285,267 @@ async function main() {
             url: photo.url,
           })),
         },
+      },
+    })
+  }
+
+  type SeedClinicalAttendance = {
+    id: string
+    studentId: string
+    serviceId: string
+    professionalId: string
+    date: string
+    weekday: Weekday
+    time: string
+    durationMinutes: number
+    status: 'agendada' | 'realizada' | 'falta' | 'cancelada'
+    notes?: string
+  }
+
+  const today = new Date()
+  const thisMonday = getMonday(today)
+  const lastMonday = addDays(thisMonday, -7)
+  const todayIso = toIsoDate(today)
+
+  function dayOfWeek(
+    monday: Date,
+    weekdayIndex: number,
+  ): { date: string; weekday: Weekday } {
+    const date = addDays(monday, weekdayIndex)
+    return {
+      date: toIsoDate(date),
+      weekday: weekdays[weekdayIndex]!,
+    }
+  }
+
+  function statusForDate(date: string): 'agendada' | 'realizada' {
+    return date < todayIso ? 'realizada' : 'agendada'
+  }
+
+  const exampleClinicalAttendances: SeedClinicalAttendance[] = [
+    // Histórico da pessoa exemplo (Helena)
+    {
+      id: 'ca-ex1',
+      studentId: 's-exemplo',
+      serviceId: 'svc-avaliacao',
+      professionalId: 'prof1',
+      ...dayOfWeek(lastMonday, 5),
+      time: '09:00',
+      durationMinutes: 60,
+      status: 'realizada',
+      notes: 'Avaliação fisioterapêutica inicial — ombro D e cervical.',
+    },
+    {
+      id: 'ca-ex2',
+      studentId: 's-exemplo',
+      serviceId: 'svc-fisioterapia',
+      professionalId: 'prof1',
+      ...dayOfWeek(lastMonday, 4),
+      time: '10:00',
+      durationMinutes: 60,
+      status: 'realizada',
+      notes: 'Sessão de reabilitação de manguito rotador; boa resposta.',
+    },
+    {
+      id: 'ca-ex3',
+      studentId: 's-exemplo',
+      serviceId: 'svc-massoterapia',
+      professionalId: 'prof3',
+      ...dayOfWeek(lastMonday, 2),
+      time: '15:00',
+      durationMinutes: 60,
+      status: 'realizada',
+      notes: 'Massoterapia cervical e escapular para alívio de tensão.',
+    },
+    // Agenda da semana atual — grade de exemplo
+    {
+      id: 'ca-w1',
+      studentId: 's1',
+      serviceId: 'svc-avaliacao',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 0),
+      time: '08:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 0).date),
+      notes: 'Avaliação inicial de postura e ombro.',
+    },
+    {
+      id: 'ca-w2',
+      studentId: 's-exemplo',
+      serviceId: 'svc-fisioterapia',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 0),
+      time: '10:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 0).date),
+      notes: 'Retorno semanal de fisioterapia.',
+    },
+    {
+      id: 'ca-w3',
+      studentId: 's3',
+      serviceId: 'svc-massoterapia',
+      professionalId: 'prof3',
+      ...dayOfWeek(thisMonday, 0),
+      time: '15:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 0).date),
+    },
+    {
+      id: 'ca-w4',
+      studentId: 's5',
+      serviceId: 'svc-auriculoterapia',
+      professionalId: 'prof3',
+      ...dayOfWeek(thisMonday, 1),
+      time: '09:00',
+      durationMinutes: 45,
+      status: statusForDate(dayOfWeek(thisMonday, 1).date),
+    },
+    {
+      id: 'ca-w5',
+      studentId: 's2',
+      serviceId: 'svc-fisioterapia',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 1),
+      time: '16:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 1).date),
+      notes: 'Lombalgia — progressão de exercícios.',
+    },
+    {
+      id: 'ca-w6',
+      studentId: 's4',
+      serviceId: 'svc-massoterapia',
+      professionalId: 'prof3',
+      ...dayOfWeek(thisMonday, 2),
+      time: '08:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 2).date),
+    },
+    {
+      id: 'ca-w7',
+      studentId: 's6',
+      serviceId: 'svc-avaliacao',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 2),
+      time: '10:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 2).date),
+    },
+    {
+      id: 'ca-w8',
+      studentId: 's7',
+      serviceId: 'svc-fisioterapia',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 2),
+      time: '17:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 2).date),
+    },
+    {
+      id: 'ca-w9',
+      studentId: 's8',
+      serviceId: 'svc-auriculoterapia',
+      professionalId: 'prof3',
+      ...dayOfWeek(thisMonday, 3),
+      time: '09:00',
+      durationMinutes: 45,
+      status: statusForDate(dayOfWeek(thisMonday, 3).date),
+    },
+    {
+      id: 'ca-w10',
+      studentId: 's1',
+      serviceId: 'svc-fisioterapia',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 3),
+      time: '15:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 3).date),
+    },
+    {
+      id: 'ca-w11',
+      studentId: 's3',
+      serviceId: 'svc-massoterapia',
+      professionalId: 'prof3',
+      ...dayOfWeek(thisMonday, 3),
+      time: '16:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 3).date),
+    },
+    {
+      id: 'ca-w12',
+      studentId: 's-exemplo',
+      serviceId: 'svc-fisioterapia',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 4),
+      time: '10:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 4).date),
+      notes: 'Retorno semanal — ombro D.',
+    },
+    {
+      id: 'ca-w13',
+      studentId: 's2',
+      serviceId: 'svc-massoterapia',
+      professionalId: 'prof3',
+      ...dayOfWeek(thisMonday, 4),
+      time: '16:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 4).date),
+    },
+    {
+      id: 'ca-w14',
+      studentId: 's5',
+      serviceId: 'svc-avaliacao',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 5),
+      time: '08:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 5).date),
+    },
+    {
+      id: 'ca-w15',
+      studentId: 's4',
+      serviceId: 'svc-massoterapia',
+      professionalId: 'prof3',
+      ...dayOfWeek(thisMonday, 5),
+      time: '09:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 5).date),
+    },
+    {
+      id: 'ca-w16',
+      studentId: 's6',
+      serviceId: 'svc-fisioterapia',
+      professionalId: 'prof1',
+      ...dayOfWeek(thisMonday, 5),
+      time: '10:00',
+      durationMinutes: 60,
+      status: statusForDate(dayOfWeek(thisMonday, 5).date),
+    },
+  ]
+
+  const clinicStudentIds = [
+    ...new Set(exampleClinicalAttendances.map((a) => a.studentId)),
+  ]
+  await prisma.student.updateMany({
+    where: { id: { in: clinicStudentIds } },
+    data: { usesClinic: true },
+  })
+
+  for (const attendance of exampleClinicalAttendances) {
+    await prisma.clinicalAttendance.create({
+      data: {
+        id: attendance.id,
+        studioId: studioRow.id,
+        studentId: attendance.studentId,
+        serviceId: attendance.serviceId,
+        professionalId: attendance.professionalId,
+        date: parseIsoDate(attendance.date),
+        weekday: toDbWeekday(attendance.weekday),
+        time: attendance.time,
+        durationMinutes: attendance.durationMinutes,
+        status: attendance.status,
+        notes: attendance.notes ?? null,
       },
     })
   }

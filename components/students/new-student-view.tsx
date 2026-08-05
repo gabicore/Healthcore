@@ -14,7 +14,7 @@ export function NewStudentView() {
   return (
     <>
       <PageHeader
-        title="Novo aluno"
+        title="Nova pessoa"
         description="Preencha os dados pessoais para cadastrar"
       >
         <Button

@@ -75,7 +75,7 @@ const statusOptions = [
 ]
 
 const revenueConfig = {
-  receita: { label: 'Receita alunos', color: 'var(--chart-1)' },
+  receita: { label: 'Receita pessoas', color: 'var(--chart-1)' },
 } satisfies ChartConfig
 
 const expenseChartConfig = {
@@ -197,7 +197,29 @@ function StatCard({
   )
 }
 
+const SHOW_FINANCEIRO_CONTENT = false
+
 export function FinanceiroPage() {
+  if (!SHOW_FINANCEIRO_CONTENT) {
+    return (
+      <>
+        <PageHeader
+          title="Financeiro"
+          description="Entradas das pessoas, gastos fixos e contas do estúdio"
+        />
+        <div className="p-4 md:p-6">
+          <p className="text-sm text-muted-foreground">
+            Conteúdo temporariamente oculto.
+          </p>
+        </div>
+      </>
+    )
+  }
+
+  return <FinanceiroPageContent />
+}
+
+function FinanceiroPageContent() {
   const today = useMemo(() => new Date(), [])
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [students, setStudents] = useState<Student[]>([])
@@ -401,11 +423,11 @@ export function FinanceiroPage() {
     <>
       <PageHeader
         title="Financeiro"
-        description="Entradas dos alunos, gastos fixos e contas do estúdio"
+        description="Entradas das pessoas, gastos fixos e contas do estúdio"
       >
         <Button size="sm" nativeButton={false} render={<Link href="/alunos" />}>
           <Users data-icon="inline-start" />
-          Cobranças por aluno
+          Cobranças por pessoa
         </Button>
       </PageHeader>
 
@@ -416,7 +438,7 @@ export function FinanceiroPage() {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
-            title="Entrada dos alunos"
+            title="Entrada das pessoas"
             value={formatCurrency(studentRevenue)}
             hint={`Recebido em ${monthLabel}`}
             icon={Wallet}
@@ -437,7 +459,7 @@ export function FinanceiroPage() {
             accent={balance < 0}
           />
           <StatCard
-            title="A receber (alunos)"
+            title="A receber (pessoas)"
             value={formatCurrency(openTotal)}
             hint={`${overdue.length} cobrança(s) em atraso · ${formatCurrency(overdueTotal)}`}
             icon={TriangleAlert}
@@ -450,7 +472,7 @@ export function FinanceiroPage() {
             <CardHeader>
               <CardTitle>Entrada prevista × realizada</CardTitle>
               <CardDescription>
-                Mensalidades dos {activeCount} alunos ativos
+                Mensalidades das {activeCount} pessoas ativas
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
@@ -482,8 +504,8 @@ export function FinanceiroPage() {
                 </p>
               </div>
               <p className="text-sm text-muted-foreground">
-                Detalhes de cobrança por aluno ficam no perfil de cada aluno ou
-                na lista de alunos.
+                Detalhes de cobrança por pessoa ficam no perfil de cada pessoa ou
+                na lista de pessoas.
               </p>
             </CardContent>
           </Card>
@@ -728,9 +750,9 @@ export function FinanceiroPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Receita de alunos (últimos meses)</CardTitle>
+            <CardTitle>Receita de pessoas (últimos meses)</CardTitle>
             <CardDescription>
-              Valores recebidos das mensalidades — sem detalhar por aluno
+              Valores recebidos das mensalidades — sem detalhar por pessoa
             </CardDescription>
           </CardHeader>
           <CardContent>

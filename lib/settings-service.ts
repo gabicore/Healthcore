@@ -37,10 +37,12 @@ export function serializePlan(row: DbPlan): Plan {
   return {
     id: row.id,
     name: row.name,
+    kind: row.kind,
     period: row.period,
     frequency: row.frequency as Plan['frequency'],
     frequencyLabel: row.frequencyLabel,
     price: decimalToNumber(row.price),
+    sessionsTotal: row.sessionsTotal,
   }
 }
 
@@ -113,11 +115,16 @@ export async function createPlanRecord(input: CreatePlanInput) {
       id: input.id ?? `plan-${Date.now()}`,
       studioId: DEFAULT_STUDIO_ID,
       name: (input.name ?? 'Novo plano').trim() || 'Novo plano',
+      kind: input.kind ?? 'mensalidade',
       period,
       frequency,
       frequencyLabel:
         input.frequencyLabel ?? frequencyLabel(frequency, period),
       price: input.price ?? 0,
+      sessionsTotal:
+        input.kind === 'pacote' || input.kind === 'avulso'
+          ? (input.sessionsTotal ?? (input.kind === 'avulso' ? 1 : null))
+          : null,
     },
   })
   return serializePlan(created)
@@ -142,6 +149,10 @@ export async function updatePlanRecord(id: string, input: UpdatePlanInput) {
           ? frequencyLabel(frequency, period)
           : existing.frequencyLabel),
       ...(input.price !== undefined ? { price: input.price } : {}),
+      ...(input.kind !== undefined ? { kind: input.kind } : {}),
+      ...(input.sessionsTotal !== undefined
+        ? { sessionsTotal: input.sessionsTotal }
+        : {}),
     },
   })
   return serializePlan(updated)
@@ -151,7 +162,7 @@ export async function deletePlanRecord(id: string) {
   const existing = await prisma.plan.findUnique({ where: { id } })
   if (!existing) return false
   const inUse = await prisma.student.count({ where: { planId: id } })
-  if (inUse > 0) throw new Error('Plano em uso por alunos')
+  if (inUse > 0) throw new Error('Plano em uso por pessoas')
   const inContracts = await prisma.contract.count({ where: { planId: id } })
   if (inContracts > 0) throw new Error('Plano em uso por contratos')
   await prisma.plan.delete({ where: { id } })

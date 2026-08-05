@@ -31,7 +31,7 @@ export async function createEvolutionRecord(
   input: CreateEvolutionInput,
 ) {
   const student = await prisma.student.findUnique({ where: { id: studentId } })
-  if (!student) throw new Error('Aluno não encontrado')
+  if (!student) throw new Error('Pessoa não encontrada')
 
   const governing = await findGoverningContract(studentId)
   if (!governing) {

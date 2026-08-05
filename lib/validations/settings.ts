@@ -2,22 +2,27 @@ import { z } from 'zod'
 import { weekdaySchema } from '@/lib/validations/student'
 
 export const planPeriodSchema = z.enum(['mensal', 'trimestral', 'semestral'])
+export const planKindSchema = z.enum(['mensalidade', 'pacote', 'avulso'])
 
 export const createPlanSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().min(1).optional().default('Novo plano'),
+  kind: planKindSchema.optional().default('mensalidade'),
   period: planPeriodSchema.optional().default('mensal'),
   frequency: z.number().int().min(1).max(3).optional().default(1),
   frequencyLabel: z.string().optional(),
   price: z.number().nonnegative().optional().default(0),
+  sessionsTotal: z.number().int().positive().nullable().optional(),
 })
 
 export const updatePlanSchema = z.object({
   name: z.string().min(1).optional(),
+  kind: planKindSchema.optional(),
   period: planPeriodSchema.optional(),
   frequency: z.number().int().min(1).max(3).optional(),
   frequencyLabel: z.string().optional(),
   price: z.number().nonnegative().optional(),
+  sessionsTotal: z.number().int().positive().nullable().optional(),
 })
 
 export const createProfessionalSchema = z.object({

@@ -11,6 +11,7 @@ import {
   toDbWeekday,
   toIsoDateOnly,
 } from '@/lib/db-mappers'
+import { assertProfessionalSlotFree } from '@/lib/professional-schedule-conflict'
 import { prisma } from '@/lib/prisma'
 
 export type CreateSessionInput = {
@@ -123,7 +124,7 @@ export async function createStudentSessionRecord(
   input: CreateSessionInput,
 ) {
   const student = await prisma.student.findUnique({ where: { id: studentId } })
-  if (!student) throw new Error('Aluno não encontrado')
+  if (!student) throw new Error('Pessoa não encontrada')
 
   const date = parseIsoDate(input.date)
   const weekday = weekdayFromIsoDate(input.date)
@@ -140,6 +141,14 @@ export async function createStudentSessionRecord(
       date,
       time: input.time,
       weekday,
+    })
+  }
+
+  if (input.professionalId) {
+    await assertProfessionalSlotFree({
+      professionalId: input.professionalId,
+      dateIso: input.date,
+      time: input.time,
     })
   }
 
@@ -259,7 +268,7 @@ async function assertMakeupPlacement(input: {
   )
   if (conflictsFixed) {
     throw new Error(
-      'Reposição não pode ser no mesmo dia e horário da agenda fixa do aluno',
+      'Reposição não pode ser no mesmo dia e horário da agenda fixa da pessoa',
     )
   }
 
@@ -346,7 +355,7 @@ export async function updateSessionRecord(
 
   if (existing.type === 'reposicao' && (input.date !== undefined || input.time !== undefined)) {
     if (!existing.studentId) {
-      throw new Error('Aula sem aluno vinculado')
+      throw new Error('Aula sem pessoa vinculada')
     }
     const weekday = weekdayFromIsoDate(nextDateIso)
     await assertMakeupPlacement({
@@ -356,6 +365,18 @@ export async function updateSessionRecord(
       date: nextDate,
       time: nextTime,
       weekday,
+    })
+  }
+
+  if (
+    existing.professionalId &&
+    (input.date !== undefined || input.time !== undefined)
+  ) {
+    await assertProfessionalSlotFree({
+      professionalId: existing.professionalId,
+      dateIso: nextDateIso,
+      time: nextTime,
+      ignoreClassSessionId: existing.id,
     })
   }
 

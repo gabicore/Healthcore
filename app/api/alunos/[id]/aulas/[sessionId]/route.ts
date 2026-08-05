@@ -32,7 +32,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         (error.message.includes('vigência') ||
           error.message.includes('agenda fixa') ||
           error.message.includes('aula fixa') ||
-          error.message.includes('Data inválida'))
+          error.message.includes('Data inválida') ||
+          error.message.includes('Profissional') ||
+          error.message.includes('horário'))
       ) {
         return jsonError(error.message, 400)
       }

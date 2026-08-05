@@ -285,7 +285,7 @@ export async function createContractRecord(
   input: CreateContractInput,
 ) {
   const student = await prisma.student.findUnique({ where: { id: studentId } })
-  if (!student) throw new Error('Aluno não encontrado')
+  if (!student) throw new Error('Pessoa não encontrada')
 
   const activeContract = await prisma.contract.findFirst({
     where: { studentId, status: 'ativo' },
@@ -293,7 +293,7 @@ export async function createContractRecord(
   })
   if (activeContract) {
     throw new Error(
-      `Já existe um contrato ativo para este aluno (${activeContract.number}). Encerre ou rescinda o atual antes de criar outro.`,
+      `Já existe um contrato ativo para esta pessoa (${activeContract.number}). Encerre ou rescinda o atual antes de criar outro.`,
     )
   }
 
@@ -326,7 +326,10 @@ export async function createContractRecord(
       endDate: end,
       status: 'rascunho',
       monthlyValue:
-        input.monthlyValue ?? decimalToNumber(student.monthlyValue),
+        input.monthlyValue ??
+        (student.monthlyValue != null
+          ? decimalToNumber(student.monthlyValue)
+          : Number(plan.price)),
       discountPercent:
         input.discountPercent ?? student.discountPercent ?? 0,
       discountNote: input.discountNote ?? null,
@@ -630,7 +633,7 @@ export async function emailContractRecord(id: string) {
     where: { id: contract.studentId },
   })
   if (!studentRow?.email) {
-    throw new Error('Aluno sem e-mail cadastrado')
+    throw new Error('Pessoa sem e-mail cadastrado')
   }
 
   const plan = await prisma.plan.findUnique({

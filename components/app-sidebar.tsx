@@ -5,13 +5,19 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   CalendarDays,
+  ChevronRight,
+  Clock,
   LayoutDashboard,
   LogOut,
-  Megaphone,
+  Package,
   Settings,
+  Stethoscope,
+  Tags,
+  UserRound,
   Users,
   Wallet,
   Activity,
+  BriefcaseMedical,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -26,6 +32,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -33,21 +42,44 @@ import { Button } from '@/components/ui/button'
 import { initials, studio as studioFallback } from '@/lib/data'
 import { fetchStudio } from '@/lib/settings-api'
 import { authClient, useSession } from '@/lib/auth/client'
+import { cn } from '@/lib/utils'
 
-const nav = [
-  { title: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { title: 'Alunos', href: '/alunos', icon: Users },
-  { title: 'Agenda', href: '/agenda', icon: CalendarDays },
-  { title: 'Campanhas', href: '/campanhas', icon: Megaphone },
-  { title: 'Financeiro', href: '/financeiro', icon: Wallet },
-  { title: 'Configurações', href: '/configuracoes', icon: Settings },
+const agendaSubNav = [
+  { title: 'Pilates', href: '/agenda', icon: CalendarDays },
+  { title: 'Clínica', href: '/clinica/agenda', icon: Stethoscope },
 ]
+
+const settingsSubNav = [
+  { title: 'Horários', href: '/configuracoes/horarios', icon: Clock },
+  { title: 'Planos', href: '/configuracoes/planos', icon: Tags },
+  { title: 'Profissionais', href: '/configuracoes/profissionais', icon: UserRound },
+  { title: 'Serviços', href: '/configuracoes/servicos', icon: BriefcaseMedical },
+  { title: 'Estoque', href: '/configuracoes/estoque', icon: Package },
+]
+
+function isAgendaPath(pathname: string) {
+  return (
+    pathname === '/agenda' ||
+    pathname.startsWith('/agenda/') ||
+    pathname.startsWith('/clinica/agenda')
+  )
+}
+
+function isSettingsPath(pathname: string) {
+  return (
+    pathname === '/configuracoes' || pathname.startsWith('/configuracoes/')
+  )
+}
 
 export function AppSidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const { data: session } = useSession()
   const [studio, setStudio] = useState(studioFallback)
+  const [agendaOpen, setAgendaOpen] = useState(() => isAgendaPath(pathname))
+  const [settingsOpen, setSettingsOpen] = useState(() =>
+    isSettingsPath(pathname),
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -62,6 +94,11 @@ export function AppSidebar() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (isAgendaPath(pathname)) setAgendaOpen(true)
+    if (isSettingsPath(pathname)) setSettingsOpen(true)
+  }, [pathname])
 
   async function handleLogout() {
     await authClient.signOut()
@@ -94,26 +131,124 @@ export function AppSidebar() {
           <SidebarGroupLabel>Menu</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {nav.map((item) => {
-                const active =
-                  item.href === '/'
-                    ? pathname === '/'
-                    : pathname.startsWith(item.href)
-                return (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton
-                      isActive={active}
-                      tooltip={item.title}
-                      render={
-                        <Link href={item.href}>
-                          <item.icon />
-                          <span>{item.title}</span>
-                        </Link>
-                      }
-                    />
-                  </SidebarMenuItem>
-                )
-              })}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={pathname === '/'}
+                  tooltip="Dashboard"
+                  render={
+                    <Link href="/">
+                      <LayoutDashboard />
+                      <span>Dashboard</span>
+                    </Link>
+                  }
+                />
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={isAgendaPath(pathname)}
+                  tooltip="Agenda"
+                  aria-expanded={agendaOpen}
+                  onClick={() => setAgendaOpen((open) => !open)}
+                >
+                  <CalendarDays />
+                  <span>Agenda</span>
+                  <ChevronRight
+                    className={cn(
+                      'ml-auto transition-transform',
+                      agendaOpen && 'rotate-90',
+                    )}
+                  />
+                </SidebarMenuButton>
+                {agendaOpen ? (
+                  <SidebarMenuSub>
+                    {agendaSubNav.map((item) => {
+                      const active =
+                        item.href === '/agenda'
+                          ? pathname === '/agenda' ||
+                            pathname.startsWith('/agenda/')
+                          : pathname.startsWith(item.href)
+                      return (
+                        <SidebarMenuSubItem key={item.href}>
+                          <SidebarMenuSubButton
+                            isActive={active}
+                            render={
+                              <Link href={item.href}>
+                                <item.icon />
+                                <span>{item.title}</span>
+                              </Link>
+                            }
+                          />
+                        </SidebarMenuSubItem>
+                      )
+                    })}
+                  </SidebarMenuSub>
+                ) : null}
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={pathname.startsWith('/alunos')}
+                  tooltip="Pessoas"
+                  render={
+                    <Link href="/alunos">
+                      <Users />
+                      <span>Pessoas</span>
+                    </Link>
+                  }
+                />
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={pathname.startsWith('/financeiro')}
+                  tooltip="Financeiro"
+                  render={
+                    <Link href="/financeiro">
+                      <Wallet />
+                      <span>Financeiro</span>
+                    </Link>
+                  }
+                />
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={pathname === '/configuracoes'}
+                  tooltip="Configurações"
+                  aria-expanded={settingsOpen}
+                  onClick={() => setSettingsOpen((open) => !open)}
+                >
+                  <Settings />
+                  <span>Configurações</span>
+                  <ChevronRight
+                    className={cn(
+                      'ml-auto transition-transform',
+                      settingsOpen && 'rotate-90',
+                    )}
+                  />
+                </SidebarMenuButton>
+                {settingsOpen ? (
+                  <SidebarMenuSub>
+                    {settingsSubNav.map((item) => {
+                      const active = pathname.startsWith(item.href)
+                      return (
+                        <SidebarMenuSubItem key={item.href}>
+                          <SidebarMenuSubButton
+                            isActive={active}
+                            render={
+                              <Link href={item.href}>
+                                <item.icon />
+                                <span>{item.title}</span>
+                              </Link>
+                            }
+                          />
+                        </SidebarMenuSubItem>
+                      )
+                    })}
+                  </SidebarMenuSub>
+                ) : null}
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

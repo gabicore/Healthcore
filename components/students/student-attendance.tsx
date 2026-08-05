@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -52,7 +53,6 @@ import {
   morningSlots,
   parseIsoDate,
   contractTotalClasses,
-  professionals,
   replaceStudioHours,
   scheduleSlotsOnDate,
   setAttendanceStatus,
@@ -113,6 +113,10 @@ export function StudentAttendancePanel({
   const [editingSession, setEditingSession] = useState<ClassSession | null>(null)
   const [makeupOpen, setMakeupOpen] = useState(false)
   const [makeupSource, setMakeupSource] = useState<ClassSession | null>(null)
+  const [occurrenceTarget, setOccurrenceTarget] = useState<{
+    session: ClassSession
+    status: 'falta' | 'cancelada'
+  } | null>(null)
   const [rangeFrom, setRangeFrom] = useState(historyFrom)
   const [rangeTo, setRangeTo] = useState<string | null>(historyTo)
   const [persistedSessions, setPersistedSessions] = useState<ClassSession[]>(
@@ -253,11 +257,12 @@ export function StudentAttendancePanel({
     [sessions, historyBounds],
   )
 
-  /** Aulas fixas com falta/cancelamento ainda sem reposição + reposições falhas. */
-  const toRemakeSessions = useMemo(() => {
+  /** Aulas fixas com falta/cancelamento (pendentes ou já remarcadas) + reposições falhas. */
+  const remakeSessions = useMemo(() => {
     const byId = new Map<string, ClassSession>()
     for (const session of [
       ...makeupAllowance.pendingMissed,
+      ...makeupAllowance.coveredMissed,
       ...makeupAllowance.failedMakeups,
     ]) {
       byId.set(session.id, session)
@@ -265,22 +270,11 @@ export function StudentAttendancePanel({
     return [...byId.values()].sort((a, b) =>
       `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`),
     )
-  }, [makeupAllowance.pendingMissed, makeupAllowance.failedMakeups])
-
-  /** Reposições já marcadas/reagendadas (permanecem na grade com status atual). */
-  const remadeSessions = useMemo(
-    () =>
-      sessions
-        .filter(
-          (s) =>
-            s.type === 'reposicao' &&
-            (s.status === 'agendada' || s.status === 'presente'),
-        )
-        .sort((a, b) =>
-          `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`),
-        ),
-    [sessions],
-  )
+  }, [
+    makeupAllowance.pendingMissed,
+    makeupAllowance.coveredMissed,
+    makeupAllowance.failedMakeups,
+  ])
 
   function openMakeupDialog(session?: ClassSession) {
     if (session?.type === 'reposicao') {
@@ -310,9 +304,27 @@ export function StudentAttendancePanel({
   }
 
   function handleStatus(session: ClassSession, status: AttendanceStatus) {
+    if (status === 'falta' || status === 'cancelada') {
+      setOccurrenceTarget({ session, status })
+      return
+    }
+    applyStatus(session, status, null)
+  }
+
+  function applyStatus(
+    session: ClassSession,
+    status: AttendanceStatus,
+    occurrence: string | null,
+  ) {
     const previous = session.status
+    const previousNotes = session.notes
+    const nextNotes =
+      status === 'falta' || status === 'cancelada'
+        ? occurrence?.trim() || null
+        : null
+    const nextSession = { ...session, status, notes: nextNotes ?? undefined }
     try {
-      setAttendanceStatus({ ...session, status }, status)
+      setAttendanceStatus(nextSession, status)
     } catch {
       /* ledger pode rejeitar horário fora do funcionamento atual */
     }
@@ -330,23 +342,27 @@ export function StudentAttendancePanel({
           (s.date === session.date &&
             s.time === session.time &&
             s.type === session.type)
-            ? { ...s, status }
+            ? { ...s, status, notes: nextNotes ?? undefined }
             : s,
         )
       }
-      return [...prev, { ...session, status }]
+      return [...prev, nextSession]
     })
     setDisplayTick((t) => t + 1)
 
     const persist =
       isDbSession(session)
-        ? updateStudentSession(studentId, session.id, { status })
+        ? updateStudentSession(studentId, session.id, {
+            status,
+            notes: nextNotes,
+          })
         : session.type === 'fixa'
           ? upsertFixedStudentSession(studentId, {
               date: session.date,
               time: session.time,
               weekday: session.weekday,
               status,
+              notes: nextNotes,
             }).then((saved) => {
               setPersistedSessions((prev) => {
                 const withoutGenerated = prev.filter(
@@ -371,7 +387,10 @@ export function StudentAttendancePanel({
 
     if (!persist) {
       toast.success('Presença atualizada', {
-        description: `Status: ${status}`,
+        description:
+          status === 'falta' || status === 'cancelada'
+            ? `Ocorrência registrada`
+            : `Status: ${status}`,
       })
       return
     }
@@ -379,7 +398,10 @@ export function StudentAttendancePanel({
     void persist
       .then(() => {
         toast.success('Presença atualizada', {
-          description: `Status: ${status}`,
+          description:
+            status === 'falta' || status === 'cancelada'
+              ? 'Ocorrência registrada'
+              : `Status: ${status}`,
         })
       })
       .catch((error) => {
@@ -389,12 +411,15 @@ export function StudentAttendancePanel({
             (s.date === session.date &&
               s.time === session.time &&
               s.type === session.type)
-              ? { ...s, status: previous }
+              ? { ...s, status: previous, notes: previousNotes }
               : s,
           ),
         )
         try {
-          setAttendanceStatus({ ...session, status: previous }, previous)
+          setAttendanceStatus(
+            { ...session, status: previous, notes: previousNotes },
+            previous,
+          )
         } catch {
           /* ignore */
         }
@@ -477,32 +502,30 @@ export function StudentAttendancePanel({
       <AttendanceListCard
         title="Reposições"
         incompleteMessage="Complete a agenda fixa para liberar as reposições."
-        emptyMessage="Nenhuma aula a remarcar."
+        emptyMessage="Nenhuma falta ou cancelamento no período."
         scheduleComplete={scheduleComplete}
-        hasSessions={toRemakeSessions.length > 0}
+        hasSessions={remakeSessions.length > 0}
       >
         <SessionHistoryTable
-          sessions={toRemakeSessions}
+          sessions={remakeSessions}
           makeupAllowance={makeupAllowance}
           onRemake={openMakeupDialog}
           actionMode="remake"
         />
       </AttendanceListCard>
 
-      <AttendanceListCard
-        title="Aulas remarcadas"
-        incompleteMessage="Complete a agenda fixa para liberar as aulas remarcadas."
-        emptyMessage="Nenhuma aula remarcada no período."
-        scheduleComplete={scheduleComplete}
-        hasSessions={remadeSessions.length > 0}
-      >
-        <SessionHistoryTable
-          sessions={remadeSessions}
-          makeupAllowance={makeupAllowance}
-          onStatus={handleStatus}
-          actionMode="status"
-        />
-      </AttendanceListCard>
+      <OccurrenceDialog
+        target={occurrenceTarget}
+        onOpenChange={(open) => {
+          if (!open) setOccurrenceTarget(null)
+        }}
+        onConfirm={(occurrence) => {
+          if (!occurrenceTarget) return
+          const { session, status } = occurrenceTarget
+          setOccurrenceTarget(null)
+          applyStatus(session, status, occurrence)
+        }}
+      />
 
       <MakeupDialog
         studentId={studentId}
@@ -595,9 +618,19 @@ function SessionHistoryTable({
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           <TableHead className="pl-4">Data</TableHead>
-          <TableHead>Dia</TableHead>
-          <TableHead>Horário</TableHead>
-          <TableHead>Status</TableHead>
+          {actionMode === 'remake' ? (
+            <>
+              <TableHead>Motivo</TableHead>
+              <TableHead>Ocorrência</TableHead>
+              <TableHead>Reposição</TableHead>
+            </>
+          ) : (
+            <>
+              <TableHead>Dia</TableHead>
+              <TableHead>Horário</TableHead>
+              <TableHead>Status</TableHead>
+            </>
+          )}
           <TableHead className="pr-4 text-right">Ações</TableHead>
         </TableRow>
       </TableHeader>
@@ -606,14 +639,20 @@ function SessionHistoryTable({
           const needsMakeup = makeupAllowance.pendingMissed.some(
             (s) => s.id === session.id,
           )
+          const coveredMakeup = makeupAllowance.coveredMissed.some(
+            (s) => s.id === session.id,
+          )
           const failedMakeup = makeupAllowance.failedMakeups.some(
             (s) => s.id === session.id,
           )
+          const linkedMakeup = makeupAllowance.makeupByMissedId[session.id]
           return (
             <TableRow
               key={session.id}
               className={
-                actionMode === 'remake' ? 'bg-destructive/5' : undefined
+                actionMode === 'remake' && (needsMakeup || failedMakeup)
+                  ? 'bg-destructive/5'
+                  : undefined
               }
             >
               <TableCell className="whitespace-nowrap pl-4 text-sm">
@@ -625,21 +664,54 @@ function SessionHistoryTable({
                     A remarcar
                   </span>
                 ) : null}
+                {actionMode === 'remake' && coveredMakeup ? (
+                  <span className="mt-0.5 block text-[11px] font-medium text-muted-foreground">
+                    Remarcada
+                  </span>
+                ) : null}
                 {actionMode === 'remake' && failedMakeup ? (
                   <span className="mt-0.5 block text-[11px] font-medium text-destructive">
                     Reposição a reagendar
                   </span>
                 ) : null}
               </TableCell>
-              <TableCell className="whitespace-nowrap text-sm">
-                {session.weekday}
-              </TableCell>
-              <TableCell className="tabular-nums text-sm">
-                {session.time}
-              </TableCell>
-              <TableCell>
-                <AttendanceBadge status={session.status} />
-              </TableCell>
+              {actionMode === 'remake' ? (
+                <>
+                  <TableCell>
+                    <AttendanceBadge status={session.status} />
+                  </TableCell>
+                  <TableCell className="max-w-[20rem] text-sm whitespace-normal text-muted-foreground">
+                    {session.notes?.trim() || '—'}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {linkedMakeup ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-medium tabular-nums">
+                          {formatShortDate(linkedMakeup.date)} ·{' '}
+                          {linkedMakeup.time}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {linkedMakeup.weekday}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                </>
+              ) : (
+                <>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {session.weekday}
+                  </TableCell>
+                  <TableCell className="tabular-nums text-sm">
+                    {session.time}
+                  </TableCell>
+                  <TableCell>
+                    <AttendanceBadge status={session.status} />
+                  </TableCell>
+                </>
+              )}
               <TableCell className="pr-4 text-right">
                 <div className="flex flex-wrap justify-end gap-1">
                   {actionMode === 'status' && onStatus
@@ -660,7 +732,7 @@ function SessionHistoryTable({
                         </Button>
                       ))
                     : null}
-                  {actionMode === 'remake' && onRemake ? (
+                  {actionMode === 'remake' && onRemake && !coveredMakeup ? (
                     <Button
                       type="button"
                       size="xs"
@@ -669,6 +741,17 @@ function SessionHistoryTable({
                     >
                       <RefreshCw data-icon="inline-start" />
                       {failedMakeup ? 'Reagendar' : 'Remarcar'}
+                    </Button>
+                  ) : null}
+                  {actionMode === 'remake' && onRemake && linkedMakeup ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => onRemake(linkedMakeup)}
+                    >
+                      <RefreshCw data-icon="inline-start" />
+                      Editar
                     </Button>
                   ) : null}
                 </div>
@@ -714,6 +797,198 @@ function StatCard({
         ) : null}
       </CardContent>
     </Card>
+  )
+}
+
+const OCCURRENCE_OPTIONS_FALTA = [
+  'Falta',
+  'Atestado médico',
+  'Atraso',
+  'Outro',
+] as const
+
+const OCCURRENCE_OPTIONS_CANCELADA = [
+  'Feriado',
+  'Profissional ausente',
+  'Condições climáticas',
+  'Outro',
+] as const
+
+const ALL_OCCURRENCE_OPTIONS = [
+  'Falta',
+  'Atestado médico',
+  'Atraso',
+  'Feriado',
+  'Profissional ausente',
+  'Condições climáticas',
+  'Outro',
+] as const
+
+type OccurrenceOption = (typeof ALL_OCCURRENCE_OPTIONS)[number]
+
+function occurrenceOptionsForStatus(
+  status: 'falta' | 'cancelada',
+): readonly OccurrenceOption[] {
+  return status === 'cancelada'
+    ? OCCURRENCE_OPTIONS_CANCELADA
+    : OCCURRENCE_OPTIONS_FALTA
+}
+
+function parseStoredOccurrence(notes: string | undefined): {
+  option: OccurrenceOption | ''
+  otherText: string
+} {
+  const trimmed = notes?.trim() ?? ''
+  if (!trimmed) return { option: '', otherText: '' }
+  // Compatibilidade com rótulos antigos
+  const normalized =
+    trimmed === 'Ausência do profissional'
+      ? 'Profissional ausente'
+      : trimmed === 'Falta do aluno'
+        ? 'Falta'
+        : trimmed
+  const fixed = ALL_OCCURRENCE_OPTIONS.find(
+    (option) => option !== 'Outro' && option === normalized,
+  )
+  if (fixed) return { option: fixed, otherText: '' }
+  if (normalized.startsWith('Outro:')) {
+    return {
+      option: 'Outro',
+      otherText: normalized.slice('Outro:'.length).trim(),
+    }
+  }
+  return { option: 'Outro', otherText: normalized }
+}
+
+function OccurrenceDialog({
+  target,
+  onOpenChange,
+  onConfirm,
+}: {
+  target: {
+    session: ClassSession
+    status: 'falta' | 'cancelada'
+  } | null
+  onOpenChange: (open: boolean) => void
+  onConfirm: (occurrence: string) => void
+}) {
+  const [option, setOption] = useState<OccurrenceOption | ''>('')
+  const [otherText, setOtherText] = useState('')
+  const open = target != null
+  const statusLabel = target?.status === 'falta' ? 'falta' : 'cancelamento'
+  const options = target
+    ? occurrenceOptionsForStatus(target.status)
+    : OCCURRENCE_OPTIONS_FALTA
+
+  useEffect(() => {
+    if (!open || !target) return
+    const parsed = parseStoredOccurrence(target.session.notes)
+    const available = occurrenceOptionsForStatus(target.status)
+    if (parsed.option && available.includes(parsed.option)) {
+      setOption(parsed.option)
+      setOtherText(parsed.otherText)
+    } else if (parsed.option === 'Outro' || parsed.otherText) {
+      setOption('Outro')
+      setOtherText(parsed.otherText || parsed.option)
+    } else if (target.status === 'falta') {
+      setOption('Falta')
+      setOtherText('')
+    } else {
+      setOption('')
+      setOtherText('')
+    }
+  }, [open, target])
+
+  function handleConfirm() {
+    if (!option) {
+      toast.error('Selecione a ocorrência')
+      return
+    }
+    if (option === 'Outro') {
+      const trimmed = otherText.trim()
+      if (!trimmed) {
+        toast.error('Descreva a ocorrência')
+        return
+      }
+      onConfirm(`Outro: ${trimmed}`)
+    } else {
+      onConfirm(option)
+    }
+    setOption('')
+    setOtherText('')
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        onOpenChange(next)
+        if (!next) {
+          setOption('')
+          setOtherText('')
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Registrar {statusLabel}</DialogTitle>
+          <DialogDescription>
+            {target
+              ? `${formatShortDate(target.session.date)} · ${target.session.weekday} · ${target.session.time}. Selecione a ocorrência para o histórico de reposição.`
+              : null}
+          </DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel>Ocorrência</FieldLabel>
+            <Select
+              value={option || null}
+              onValueChange={(value) =>
+                setOption((value as OccurrenceOption | null) ?? '')
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Selecione a ocorrência" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {options.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          {option === 'Outro' ? (
+            <Field>
+              <FieldLabel htmlFor="occurrence-other">Observação</FieldLabel>
+              <Textarea
+                id="occurrence-other"
+                value={otherText}
+                onChange={(e) => setOtherText(e.target.value)}
+                placeholder="Descreva a ocorrência"
+                rows={3}
+                autoFocus
+              />
+            </Field>
+          ) : null}
+        </FieldGroup>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
+            Cancelar
+          </Button>
+          <Button type="button" onClick={handleConfirm}>
+            Confirmar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -817,7 +1092,7 @@ function MakeupDialog({
     if (weekday && fixedTimesForDay.has(time)) {
       toast.error('Horário da agenda fixa', {
         description:
-          'Reposição não pode ser no mesmo dia e horário da grade fixa do aluno.',
+          'Reposição não pode ser no mesmo dia e horário da grade fixa da pessoa.',
       })
       return
     }
@@ -833,7 +1108,6 @@ function MakeupDialog({
           type: 'reposicao',
           status: 'agendada',
           notes: notes.trim() || undefined,
-          professionalId: professionals[0]?.id,
         })
         try {
           upsertAttendanceSession(saved)

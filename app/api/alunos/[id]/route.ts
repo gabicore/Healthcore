@@ -23,7 +23,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params
     const student = await getStudentById(id)
-    if (!student) return jsonError('Aluno não encontrado', 404)
+    if (!student) return jsonError('Pessoa não encontrada', 404)
     return jsonOk(student)
   } catch (error) {
     return handleRouteError(error)
@@ -37,7 +37,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const input = updateStudentSchema.parse(body)
     try {
       const updated = await updateStudentRecord(id, input)
-      if (!updated) return jsonError('Aluno não encontrado', 404)
+      if (!updated) return jsonError('Pessoa não encontrada', 404)
       return jsonOk(updated)
     } catch (error) {
       if (error instanceof Error && error.message === 'Plano não encontrado') {
@@ -71,7 +71,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     await assertAdminPassword(adminPassword)
 
     const deleted = await deleteStudentRecord(id)
-    if (!deleted) return jsonError('Aluno não encontrado', 404)
+    if (!deleted) return jsonError('Pessoa não encontrada', 404)
     return jsonOk(deleted)
   } catch (error) {
     return handleRouteError(error)

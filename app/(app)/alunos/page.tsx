@@ -8,10 +8,10 @@ import { Button } from '@/components/ui/button'
 export default function AlunosPage() {
   return (
     <>
-      <PageHeader title="Alunos" description="Gerencie os alunos do estúdio">
+      <PageHeader title="Pessoas" description="Cadastro único de pessoas do estúdio e da clínica">
         <Button size="sm" nativeButton={false} render={<Link href="/alunos/novo" />}>
           <UserPlus data-icon="inline-start" />
-          Novo aluno
+          Nova pessoa
         </Button>
       </PageHeader>
       <div className="p-4 md:p-6">

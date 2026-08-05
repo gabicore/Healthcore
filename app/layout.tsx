@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'HealthCore — Gestão para estúdios de Pilates e Fisioterapia',
   description:
-    'Plataforma completa para gestão de alunos, agenda, evolução clínica e financeiro do seu estúdio.',
+    'Plataforma completa para gestão de pessoas, agenda, evolução clínica e financeiro do seu estúdio.',
   generator: 'v0.app',
 }
 

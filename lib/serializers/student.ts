@@ -153,13 +153,15 @@ export function serializeStudent(student: StudentWithRelations): Student {
     restrictions: student.restrictions,
     medications: student.medications,
     notes: student.notes,
+    usesPilates: student.usesPilates ?? true,
+    usesClinic: student.usesClinic ?? true,
     planId: hasActiveContract
-      ? (activeContract?.planId ?? student.planId)
-      : '',
+      ? (activeContract?.planId ?? student.planId ?? '')
+      : (student.planId ?? ''),
     monthlyValue: hasActiveContract
-      ? decimalToNumber(student.monthlyValue)
-      : 0,
-    discountPercent: hasActiveContract ? student.discountPercent : 0,
+      ? decimalToNumber(student.monthlyValue ?? 0)
+      : decimalToNumber(student.monthlyValue ?? 0),
+    discountPercent: student.discountPercent,
     dueDay: student.dueDay,
     paymentMethod: fromDbPaymentMethod(student.paymentMethod),
     schedule: hasActiveContract ? serializeSchedule(student.schedule) : [],

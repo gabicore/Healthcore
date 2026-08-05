@@ -54,17 +54,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
     } catch (error) {
       if (
         error instanceof Error &&
-        (error.message === 'Aluno não encontrado' ||
+        (error.message === 'Pessoa não encontrada' ||
           error.message.includes('inválida') ||
           error.message.includes('Reposição') ||
           error.message.includes('reposições') ||
           error.message.includes('vigência') ||
           error.message.includes('agenda fixa') ||
-          error.message.includes('aula fixa'))
+          error.message.includes('aula fixa') ||
+          error.message.includes('Profissional') ||
+          error.message.includes('horário'))
       ) {
         return jsonError(
           error.message,
-          error.message === 'Aluno não encontrado' ? 404 : 400,
+          error.message === 'Pessoa não encontrada' ? 404 : 400,
         )
       }
       throw error

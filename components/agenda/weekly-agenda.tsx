@@ -16,17 +16,13 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { InlineCell } from '@/components/financeiro/inline-cell'
 import { NewClassDialog } from '@/components/agenda/new-class-dialog'
-import { AttendanceBadge } from '@/components/status-badges'
 import { PageHeader } from '@/components/page-header'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -49,10 +45,8 @@ import {
   getMonday,
   getStudent,
   getWeekColumns,
-  initials,
   mergeWeekSessions,
   morningSlots,
-  renameScheduleSlot,
   replaceScheduleSlots,
   replaceStudioHours,
   replaceStudentsInStore,
@@ -69,6 +63,7 @@ import { fetchStudents } from '@/lib/students-api'
 import {
   createStudentSession,
   updateStudentSession,
+  upsertFixedStudentSession,
 } from '@/lib/sessions-api'
 import { cn } from '@/lib/utils'
 
@@ -148,30 +143,20 @@ export function WeeklyAgenda() {
   const key = weekKey(monday)
   const columns = useMemo(() => getWeekColumns(monday), [monday])
 
-  const scheduleBlocks = useMemo(() => {
+  const scheduleSlots = useMemo(() => {
     void slotVersion
-    return [
-      { id: 'manha' as const, label: 'Manhã', slots: [...morningSlots] },
-      { id: 'tarde' as const, label: 'Tarde', slots: [...afternoonSlots] },
-    ]
-  }, [slotVersion])
+    const set = new Set<string>()
+    for (const column of columns) {
+      for (const slot of availableSlotsForWeekday(column.weekday)) {
+        set.add(slot)
+      }
+    }
+    return [...morningSlots, ...afternoonSlots].filter((t) => set.has(t))
+  }, [columns, slotVersion])
 
   const slotCapacity = useMemo(() => {
     void slotVersion
     return SLOT_CAPACITY
-  }, [slotVersion])
-
-  const slotRangeHint = useMemo(() => {
-    void slotVersion
-    const morning =
-      morningSlots.length > 0
-        ? `${morningSlots[0].slice(0, 2)}–${morningSlots[morningSlots.length - 1].slice(0, 2)}h`
-        : '—'
-    const afternoon =
-      afternoonSlots.length > 0
-        ? `${afternoonSlots[0].slice(0, 2)}–${afternoonSlots[afternoonSlots.length - 1].slice(0, 2)}h`
-        : '—'
-    return `Manhã ${morning} · Tarde ${afternoon} · até ${SLOT_CAPACITY} vagas/horário`
   }, [slotVersion])
 
   // Sempre recalcula a grade fixa a partir dos alunos (reposições manuais são preservadas).
@@ -197,31 +182,6 @@ export function WeeklyAgenda() {
     setMonday(nextMonday)
   }
 
-  function handleRenameSlot(oldTime: string, nextRaw: string) {
-    const result = renameScheduleSlot(oldTime, nextRaw)
-    if (!result.ok) {
-      toast.error(result.error)
-      return
-    }
-    if (result.time === oldTime) return
-
-    setSessionsByWeek((prev) => {
-      const next: Record<string, ClassSession[]> = {}
-      for (const [week, list] of Object.entries(prev)) {
-        next[week] = list.map((session) =>
-          session.time === oldTime
-            ? { ...session, time: result.time }
-            : session,
-        )
-      }
-      return next
-    })
-    setSlotVersion((v) => v + 1)
-    toast.success('Horário atualizado', {
-      description: `${oldTime} → ${result.time}`,
-    })
-  }
-
   function updateStatus(sessionId: string, status: AttendanceStatus) {
     const base = mergeWeekSessions(monday, sessionsByWeek[key] ?? [], today)
     const current = base.find((s) => s.id === sessionId)
@@ -234,15 +194,26 @@ export function WeeklyAgenda() {
       [key]: base.map((s) => (s.id === sessionId ? updated : s)),
     }))
 
-    if (
-      current.studentId &&
-      !current.id.startsWith(`${current.studentId}-`)
-    ) {
-      void updateStudentSession(current.studentId, current.id, {
-        status,
-      }).catch(() => {
-        /* agenda local segue; perfil sincroniza ao reabrir */
-      })
+    if (current.studentId) {
+      const isGenerated = current.id.startsWith(`${current.studentId}-`)
+      if (isGenerated && current.type === 'fixa') {
+        // Persistência da aula gerada pela grade: falta/cancelamento geram crédito de reposição.
+        void upsertFixedStudentSession(current.studentId, {
+          date: current.date,
+          time: current.time,
+          weekday: current.weekday,
+          status,
+          notes: updated.notes ?? null,
+        }).catch(() => {
+          /* agenda local segue; perfil sincroniza ao reabrir */
+        })
+      } else if (!isGenerated) {
+        void updateStudentSession(current.studentId, current.id, {
+          status,
+        }).catch(() => {
+          /* agenda local segue; perfil sincroniza ao reabrir */
+        })
+      }
     }
 
     const labels: Record<AttendanceStatus, string> = {
@@ -257,7 +228,7 @@ export function WeeklyAgenda() {
     })
   }
 
-  function handleSave(session: ClassSession) {
+  async function handleSave(session: ClassSession) {
     const sessionMonday = getMonday(
       new Date(
         Number(session.date.slice(0, 4)),
@@ -267,87 +238,123 @@ export function WeeklyAgenda() {
     )
     const targetKey = weekKey(sessionMonday)
 
-    setSessionsByWeek((prev) => {
-      const stripped: Record<string, ClassSession[]> = {}
-      for (const [week, list] of Object.entries(prev)) {
-        stripped[week] = list.filter((s) => s.id !== session.id)
-      }
+    const stripped: Record<string, ClassSession[]> = {}
+    for (const [week, list] of Object.entries(sessionsByWeek)) {
+      stripped[week] = list.filter((s) => s.id !== session.id)
+    }
 
-      const base = mergeWeekSessions(
-        sessionMonday,
-        stripped[targetKey] ?? [],
-        today,
-      ).filter((s) => s.id !== session.id)
+    const base = mergeWeekSessions(
+      sessionMonday,
+      stripped[targetKey] ?? [],
+      today,
+    ).filter((s) => s.id !== session.id)
 
-      const occupied = base.filter(
-        (s) =>
-          s.date === session.date &&
-          s.time === session.time &&
-          s.status !== 'cancelada',
-      ).length
-      if (occupied >= slotCapacity) {
-        toast.error('Horário lotado', {
-          description: `Este horário já tem ${slotCapacity} alunos.`,
-        })
-        return prev
-      }
-      if (!availableSlotsForWeekday(session.weekday).includes(session.time)) {
-        toast.error('Estúdio fechado', {
-          description: 'Não é possível agendar neste dia ou horário.',
-        })
-        return prev
-      }
-      const already = base.some(
-        (s) =>
-          s.studentId === session.studentId &&
-          s.date === session.date &&
-          s.time === session.time &&
-          s.status !== 'cancelada',
-      )
-      if (already) {
-        toast.error(
-          session.type === 'experimental'
-            ? 'Cliente já está neste horário'
-            : 'Aluno já está neste horário',
-        )
-        return prev
-      }
+    const occupied = base.filter(
+      (s) =>
+        s.date === session.date &&
+        s.time === session.time &&
+        s.status !== 'cancelada',
+    ).length
+    if (occupied >= slotCapacity) {
+      toast.error('Horário lotado', {
+        description: `Este horário já tem ${slotCapacity} pessoas.`,
+      })
+      throw new Error('Horário lotado')
+    }
+    if (!availableSlotsForWeekday(session.weekday).includes(session.time)) {
+      toast.error('Estúdio fechado', {
+        description: 'Não é possível agendar neste dia ou horário.',
+      })
+      throw new Error('Estúdio fechado')
+    }
+    const already = base.some(
+      (s) =>
+        s.studentId === session.studentId &&
+        s.date === session.date &&
+        s.time === session.time &&
+        s.status !== 'cancelada',
+    )
+    if (already) {
+      const message =
+        session.type === 'experimental'
+          ? 'Cliente já está neste horário'
+          : 'Pessoa já está neste horário'
+      toast.error(message)
+      throw new Error(message)
+    }
+
+    const realStudentId =
+      session.studentId && !session.studentId.startsWith('guest-')
+        ? session.studentId
+        : null
+    const needsServer =
+      Boolean(realStudentId) &&
+      (session.type === 'reposicao' ||
+        session.type === 'avulsa' ||
+        session.type === 'experimental')
+
+    let saved = session
+    if (needsServer && realStudentId) {
+      const isPersistedId =
+        !session.id.startsWith('manual-') &&
+        !session.id.startsWith(`${realStudentId}-`)
       try {
-        const saved = upsertAttendanceSession(session)
-        if (
-          session.studentId &&
-          (session.type === 'reposicao' ||
-            session.type === 'avulsa' ||
-            session.type === 'experimental')
-        ) {
-          void createStudentSession(session.studentId, {
+        if (isPersistedId && editingSession) {
+          saved = await updateStudentSession(realStudentId, session.id, {
+            date: session.date,
+            time: session.time,
+            notes: session.notes ?? null,
+            status: session.status,
+          })
+        } else {
+          // Valida crédito de reposição no servidor antes de refletir na agenda.
+          saved = await createStudentSession(realStudentId, {
             date: session.date,
             time: session.time,
             type: session.type,
             status: session.status,
             notes: session.notes,
             professionalId: session.professionalId,
-          }).catch((error) => {
-            toast.error(
-              error instanceof Error
-                ? error.message
-                : 'Não foi possível salvar a aula no servidor',
-            )
           })
         }
-        return {
-          ...stripped,
-          [targetKey]: [...base, saved].sort((a, b) =>
-            `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
-          ),
-        }
-      } catch (err) {
+      } catch (error) {
         toast.error(
-          err instanceof Error
-            ? err.message
-            : 'Não foi possível agendar neste horário',
+          error instanceof Error
+            ? error.message
+            : 'Não foi possível salvar a aula no servidor',
         )
-        return prev
+        throw error
+      }
+    }
+
+    try {
+      saved = upsertAttendanceSession(saved)
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível agendar neste horário',
+      )
+      throw err
+    }
+
+    setSessionsByWeek((prev) => {
+      const nextStripped: Record<string, ClassSession[]> = {}
+      for (const [week, list] of Object.entries(prev)) {
+        nextStripped[week] = list.filter(
+          (s) => s.id !== session.id && s.id !== saved.id,
+        )
+      }
+      const nextBase = mergeWeekSessions(
+        sessionMonday,
+        nextStripped[targetKey] ?? [],
+        today,
+      ).filter((s) => s.id !== session.id && s.id !== saved.id)
+      return {
+        ...nextStripped,
+        [targetKey]: [...nextBase, saved].sort((a, b) =>
+          `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
+        ),
       }
     })
 
@@ -371,22 +378,13 @@ export function WeeklyAgenda() {
     setDialogOpen(true)
   }
 
-  const weekStats = useMemo(() => {
-    const total = sessions.filter((s) => s.status !== 'cancelada').length
-    const presentes = sessions.filter((s) => s.status === 'presente').length
-    const faltas = sessions.filter((s) => s.status === 'falta').length
-    const pendentes = sessions.filter((s) => s.status === 'agendada').length
-    const canceladas = sessions.filter((s) => s.status === 'cancelada').length
-    return { total, presentes, faltas, pendentes, canceladas }
-  }, [sessions])
-
   const isCurrentWeek = key === weekKey(getMonday(today))
 
   return (
     <>
       <PageHeader
-        title="Agenda"
-        description="Grade dos alunos · reposição, avulsa ou experimental pelo + ou Marcar aula"
+        title="Agenda Pilates"
+        description="Grade semanal de aulas de Pilates"
       >
         <NewClassDialog
           defaultDate={booking?.date ?? todayIso}
@@ -403,13 +401,13 @@ export function WeeklyAgenda() {
           sessions={sessions}
           editingSession={editingSession}
           onCreate={handleSave}
-          hideTrigger={Boolean(editingSession)}
+          hideTrigger={Boolean(editingSession) || Boolean(booking)}
           triggerLabel="Marcar aula"
         />
       </PageHeader>
 
       <div className="flex flex-col gap-5 p-4 md:p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
@@ -427,14 +425,9 @@ export function WeeklyAgenda() {
             >
               <ChevronRight />
             </Button>
-            <div className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-tight">
-                {formatWeekRange(monday)}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {slotRangeHint}
-              </span>
-            </div>
+            <span className="text-sm font-semibold tracking-tight">
+              {formatWeekRange(monday)}
+            </span>
           </div>
           {!isCurrentWeek ? (
             <Button
@@ -447,30 +440,18 @@ export function WeeklyAgenda() {
           ) : null}
         </div>
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatPill label="Alunos na grade" value={weekStats.total} />
-          <StatPill label="Presenças" value={weekStats.presentes} />
-          <StatPill label="Pendentes" value={weekStats.pendentes} />
-          <StatPill
-            label="Faltas / canceladas"
-            value={weekStats.faltas + weekStats.canceladas}
-            accent
-          />
-        </div>
-
-        {/* Desktop timetable */}
         <Card className="hidden overflow-hidden py-0 lg:block">
           <div className="overflow-x-auto">
             <table className="w-full table-fixed border-collapse text-sm">
               <colgroup>
-                <col className="w-24" />
+                <col className="w-20" />
                 {columns.map((column) => (
                   <col key={column.iso} />
                 ))}
               </colgroup>
               <thead>
                 <tr className="border-b bg-muted/40">
-                  <th className="sticky left-0 z-10 bg-muted/40 px-2 py-3 text-left text-xs font-medium text-muted-foreground">
+                  <th className="px-2 py-3 text-left text-xs font-medium text-muted-foreground">
                     Horário
                   </th>
                   {columns.map((column) => {
@@ -488,11 +469,6 @@ export function WeeklyAgenda() {
                           <span className="text-xs font-normal text-muted-foreground">
                             {column.dayNumber} {column.monthLabel}
                           </span>
-                          {isToday ? (
-                            <Badge className="mt-0.5 h-4 px-1.5 text-[10px]">
-                              Hoje
-                            </Badge>
-                          ) : null}
                         </div>
                       </th>
                     )
@@ -500,395 +476,253 @@ export function WeeklyAgenda() {
                 </tr>
               </thead>
               <tbody>
-                {scheduleBlocks.map((block) => (
-                  <PeriodRows
-                    key={block.id}
-                    label={block.label}
-                    slots={block.slots}
-                    capacity={slotCapacity}
-                    columns={columns}
-                    sessions={sessions}
-                    todayIso={todayIso}
-                    onStatusChange={updateStatus}
-                    onRenameSlot={handleRenameSlot}
-                    onBook={openBook}
-                    onEdit={openEdit}
-                  />
+                {scheduleSlots.map((slot) => (
+                  <tr key={slot} className="border-b align-top">
+                    <td className="px-2 py-2 text-xs font-medium text-muted-foreground">
+                      {slot}
+                    </td>
+                    {columns.map((column) => {
+                      const dayOpen = availableSlotsForWeekday(
+                        column.weekday,
+                      ).includes(slot)
+                      const slotSessions = sessions
+                        .filter(
+                          (s) =>
+                            s.date === column.iso &&
+                            s.time === slot &&
+                            s.status !== 'cancelada',
+                        )
+                        .sort((a, b) =>
+                          a.studentId.localeCompare(b.studentId),
+                        )
+                      const occupied = countActiveInSlot(
+                        sessions,
+                        column.iso,
+                        slot,
+                      )
+                      const full = occupied >= slotCapacity
+                      return (
+                        <td
+                          key={`${column.iso}-${slot}`}
+                          className={cn(
+                            'px-1 py-1',
+                            column.iso === todayIso && 'bg-primary/5',
+                            !dayOpen && 'bg-muted/30',
+                          )}
+                        >
+                          <div className="flex min-h-14 flex-col gap-1">
+                            {slotSessions.map((session) => (
+                              <SessionCard
+                                key={session.id}
+                                session={session}
+                                onStatusChange={updateStatus}
+                                onEdit={openEdit}
+                              />
+                            ))}
+                            {dayOpen && !full ? (
+                              <button
+                                type="button"
+                                onClick={() => openBook(column.iso, slot)}
+                                className={cn(
+                                  'flex flex-1 items-center justify-center rounded-md border border-dashed border-transparent p-1 text-muted-foreground transition hover:border-border',
+                                  slotSessions.length === 0
+                                    ? 'opacity-0 hover:opacity-100 focus-visible:opacity-100'
+                                    : 'opacity-70 hover:opacity-100',
+                                )}
+                                aria-label={`Marcar em ${column.iso} ${slot}`}
+                              >
+                                <Plus className="size-3.5" />
+                                {slotSessions.length > 0 ? (
+                                  <span className="ml-1 text-[10px] tabular-nums">
+                                    {occupied}/{slotCapacity}
+                                  </span>
+                                ) : null}
+                              </button>
+                            ) : null}
+                            {dayOpen && full ? (
+                              <span className="px-1 text-[10px] text-muted-foreground tabular-nums">
+                                {occupied}/{slotCapacity}
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                      )
+                    })}
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </Card>
 
-        {/* Mobile / tablet */}
         <div className="flex flex-col gap-4 lg:hidden">
-          {columns.map((column) => {
-            const isToday = column.iso === todayIso
-            const daySlots = availableSlotsForWeekday(column.weekday)
-            const dayCount = sessions.filter(
-              (s) => s.date === column.iso && s.status !== 'cancelada',
-            ).length
-
-            return (
-              <Card
-                key={column.iso}
-                className={cn(isToday && 'ring-1 ring-primary/25')}
-              >
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <CardTitle className="text-base">
-                        {column.weekday}
-                        {isToday ? (
-                          <Badge className="ml-2 align-middle">Hoje</Badge>
-                        ) : null}
-                      </CardTitle>
-                      <CardDescription>
-                        {column.dayNumber} {column.monthLabel} · {dayCount}{' '}
-                        aluno(s)
-                      </CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                  {daySlots.length === 0 ? (
-                    <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-                      Estúdio fechado neste dia
-                    </p>
-                  ) : null}
-                  {scheduleBlocks.map((block) => {
-                    const slots = block.slots.filter((t) =>
-                      daySlots.includes(t),
-                    )
-                    if (slots.length === 0) return null
-                    return (
-                      <div key={block.id} className="flex flex-col gap-2">
-                        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                          {block.label}
-                        </p>
-                        {slots.map((time) => (
-                          <MobileSlot
-                            key={time}
-                            column={column}
-                            time={time}
-                            capacity={slotCapacity}
-                            sessions={sessions}
-                            onStatusChange={updateStatus}
-                            onRenameSlot={handleRenameSlot}
-                            onBook={() => openBook(column.iso, time)}
-                            onEdit={openEdit}
-                          />
-                        ))}
-                      </div>
-                    )
-                  })}
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle>Como usar</CardTitle>
-            <CardDescription>
-              Clique no nome do aluno para abrir o perfil. Use os três pontinhos
-              para marcar presença, falta ou cancelar. Cada horário tem até{' '}
-              {slotCapacity} vagas.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            {statusActions.map((action) => (
-              <AttendanceBadge key={action.status} status={action.status} />
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-    </>
-  )
-}
-
-function PeriodRows({
-  label,
-  slots,
-  capacity,
-  columns,
-  sessions,
-  todayIso,
-  onStatusChange,
-  onRenameSlot,
-  onBook,
-  onEdit,
-}: {
-  label: string
-  slots: readonly string[]
-  capacity: number
-  columns: WeekDayColumn[]
-  sessions: ClassSession[]
-  todayIso: string
-  onStatusChange: (id: string, status: AttendanceStatus) => void
-  onRenameSlot: (oldTime: string, nextRaw: string) => void
-  onBook: (date: string, time: string) => void
-  onEdit: (session: ClassSession) => void
-}) {
-  return (
-    <>
-      <tr className="border-b bg-muted/25">
-        <td
-          colSpan={columns.length + 1}
-          className="px-3 py-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase"
-        >
-          {label}
-        </td>
-      </tr>
-      {slots.map((time) => (
-        <tr key={time} className="border-b last:border-b-0">
-          <td className="sticky left-0 z-10 bg-background px-2 py-2 align-top">
-            <InlineCell
-              value={time}
-              className="font-mono text-sm font-medium tabular-nums"
-              onSave={(next) => onRenameSlot(time, next)}
-            />
-          </td>
-          {columns.map((column) => {
-            const available = availableSlotsForWeekday(column.weekday)
-            const closed = !available.includes(time)
-            const isToday = column.iso === todayIso
-            const slotSessions = sessions
-              .filter(
-                (s) =>
-                  s.date === column.iso &&
-                  s.time === time &&
-                  s.status !== 'cancelada',
-              )
-              .sort((a, b) => a.studentId.localeCompare(b.studentId))
-            const occupied = countActiveInSlot(sessions, column.iso, time)
-            const full = occupied >= capacity
-
-            return (
-              <td
-                key={column.iso}
-                className={cn(
-                  'px-1 py-1.5 align-top',
-                  isToday && 'bg-primary/[0.03]',
-                  closed && 'bg-muted/30',
-                )}
-              >
-                {closed ? (
-                  <div className="flex h-full min-h-16 items-center justify-center rounded-lg text-[11px] text-muted-foreground">
-                    Fechado
-                  </div>
-                ) : (
-                  <div
-                    className={cn(
-                      'flex min-h-16 flex-col gap-1 rounded-lg border p-1.5',
-                      full
-                        ? 'border-primary/25 bg-primary/[0.04]'
-                        : 'border-border/80 bg-card',
-                    )}
-                  >
-                    <div className="flex items-center justify-between px-0.5">
-                      <span
-                        className={cn(
-                          'text-[10px] font-medium tabular-nums',
-                          full
-                            ? 'text-primary'
-                            : 'text-muted-foreground',
-                        )}
-                      >
-                        {occupied}/{capacity}
-                      </span>
-                      {!full ? (
-                        <button
-                          type="button"
-                          onClick={() => onBook(column.iso, time)}
-                          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          aria-label={`Marcar aula às ${time}`}
-                        >
-                          <Plus className="size-3.5" />
-                        </button>
-                      ) : null}
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      {slotSessions.map((session) => (
-                        <StudentChip
-                          key={session.id}
-                          session={session}
-                          onStatusChange={onStatusChange}
-                          onEdit={onEdit}
-                        />
-                      ))}
-                      {Array.from({
-                        length: Math.max(0, capacity - occupied),
-                      }).map((_, i) => (
-                        <button
-                          key={`empty-${i}`}
-                          type="button"
-                          onClick={() => onBook(column.iso, time)}
-                          className="flex h-7 items-center justify-center rounded-md border border-dashed border-border/70 text-[10px] text-muted-foreground/70 transition-colors hover:border-primary/40 hover:text-primary"
-                        >
-                          vaga
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </td>
-            )
-          })}
-        </tr>
-      ))}
-    </>
-  )
-}
-
-function MobileSlot({
-  column,
-  time,
-  capacity,
-  sessions,
-  onStatusChange,
-  onRenameSlot,
-  onBook,
-  onEdit,
-}: {
-  column: WeekDayColumn
-  time: string
-  capacity: number
-  sessions: ClassSession[]
-  onStatusChange: (id: string, status: AttendanceStatus) => void
-  onRenameSlot: (oldTime: string, nextRaw: string) => void
-  onBook: () => void
-  onEdit: (session: ClassSession) => void
-}) {
-  const slotSessions = sessions
-    .filter(
-      (s) =>
-        s.date === column.iso &&
-        s.time === time &&
-        s.status !== 'cancelada',
-    )
-    .sort((a, b) => a.studentId.localeCompare(b.studentId))
-  const occupied = countActiveInSlot(sessions, column.iso, time)
-  const full = occupied >= capacity
-
-  return (
-    <div className="rounded-xl border border-border p-2.5">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <InlineCell
-            value={time}
-            className="w-auto font-mono text-sm font-semibold tabular-nums"
-            onSave={(next) => onRenameSlot(time, next)}
-          />
-          <Badge
-            variant="outline"
-            className={cn(
-              'h-5 shrink-0 px-1.5 text-[10px] tabular-nums',
-              full && 'border-primary/30 bg-primary/10 text-primary',
-            )}
-          >
-            {occupied}/{capacity}
-          </Badge>
-        </div>
-        {!full ? (
-          <Button variant="outline" size="xs" onClick={onBook}>
-            <Plus data-icon="inline-start" />
-            Marcar
-          </Button>
-        ) : (
-          <span className="text-[11px] font-medium text-primary">Lotado</span>
-        )}
-      </div>
-      {slotSessions.length === 0 ? (
-        <button
-          type="button"
-          onClick={onBook}
-          className="flex w-full items-center justify-center rounded-lg border border-dashed border-border py-3 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
-        >
-          Nenhuma vaga ocupada — tocar para marcar
-        </button>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {slotSessions.map((session) => (
-            <StudentChip
-              key={session.id}
-              session={session}
-              onStatusChange={onStatusChange}
-              onEdit={onEdit}
-              expanded
+          {columns.map((column) => (
+            <PilatesDayCard
+              key={column.iso}
+              column={column}
+              todayIso={todayIso}
+              sessions={sessions}
+              capacity={slotCapacity}
+              onBook={openBook}
+              onEdit={openEdit}
+              onStatusChange={updateStatus}
             />
           ))}
         </div>
-      )}
-    </div>
+      </div>
+    </>
   )
 }
 
-function StudentChip({
+const typeTone: Record<ClassSession['type'], string> = {
+  fixa: 'bg-primary/12 text-primary',
+  avulsa: 'bg-chart-2/15 text-chart-2',
+  reposicao: 'bg-chart-5/15 text-chart-5',
+  experimental: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+}
+
+function SessionCard({
   session,
   onStatusChange,
   onEdit,
-  expanded,
 }: {
   session: ClassSession
   onStatusChange: (id: string, status: AttendanceStatus) => void
   onEdit: (session: ClassSession) => void
-  expanded?: boolean
 }) {
   const student = getStudent(session.studentId)
   const displayName =
-    session.guestName?.trim() || student?.name || sessionParticipantName(session)
+    session.guestName?.trim() ||
+    student?.name ||
+    sessionParticipantName(session)
   if (!displayName) return null
 
   const shortName = displayName.split(' ').slice(0, 2).join(' ')
-  const isGuest = !student || Boolean(session.guestName?.trim() && !student)
+  const canEdit = session.type !== 'fixa'
 
   return (
-    <div
-      className={cn(
-        'group flex items-center gap-1.5 rounded-md border border-border/70 bg-background px-1.5 py-1',
-        session.status === 'cancelada' && 'opacity-50',
-        session.status === 'falta' && 'border-destructive/20 bg-destructive/5',
-        session.status === 'presente' && 'border-primary/20 bg-primary/5',
-        session.type === 'experimental' &&
-          'border-amber-500/30 bg-amber-500/5',
-        expanded && 'px-2 py-1.5',
-      )}
-    >
-      <Avatar className={cn('size-5', expanded && 'size-6')}>
-        <AvatarFallback className="text-[9px]">
-          {initials(displayName)}
-        </AvatarFallback>
-      </Avatar>
-      {isGuest ? (
-        <span
-          className="min-w-0 flex-1 truncate text-xs font-medium"
-          title={displayName}
-        >
-          {shortName}
-        </span>
-      ) : (
-        <Link
-          href={`/alunos/${student!.id}`}
-          className="min-w-0 flex-1 truncate text-xs font-medium hover:underline"
-          title={displayName}
-        >
-          {shortName}
-        </Link>
-      )}
-      {session.type !== 'fixa' ? (
-        <span className="hidden text-[9px] text-muted-foreground sm:inline">
-          {typeLabel[session.type]}
-        </span>
-      ) : null}
-      {expanded ? <AttendanceBadge status={session.status} /> : null}
-      <SessionMenu
-        session={session}
-        onStatusChange={onStatusChange}
-        onEdit={onEdit}
-      />
+    <div className="rounded-md border bg-card px-1.5 py-1 text-left shadow-sm">
+      <div className="flex items-center gap-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {student && !session.guestName?.trim() ? (
+            <Link
+              href={`/alunos/${student.id}`}
+              className="min-w-0 truncate text-xs font-medium hover:underline"
+              title={displayName}
+            >
+              {shortName}
+            </Link>
+          ) : (
+            <p className="min-w-0 truncate text-xs font-medium" title={displayName}>
+              {shortName}
+            </p>
+          )}
+          <Badge
+            variant="outline"
+            className={cn(
+              'h-4 shrink-0 border-transparent px-1 text-[10px]',
+              typeTone[session.type],
+            )}
+          >
+            {typeLabel[session.type]}
+          </Badge>
+        </div>
+        <SessionMenu
+          session={session}
+          onStatusChange={onStatusChange}
+          onEdit={canEdit ? onEdit : undefined}
+        />
+      </div>
     </div>
+  )
+}
+
+function PilatesDayCard({
+  column,
+  todayIso,
+  sessions,
+  capacity,
+  onBook,
+  onEdit,
+  onStatusChange,
+}: {
+  column: WeekDayColumn
+  todayIso: string
+  sessions: ClassSession[]
+  capacity: number
+  onBook: (date: string, time: string) => void
+  onEdit: (session: ClassSession) => void
+  onStatusChange: (id: string, status: AttendanceStatus) => void
+}) {
+  const isToday = column.iso === todayIso
+  const daySlots = availableSlotsForWeekday(column.weekday)
+  const dayItems = sessions.filter(
+    (s) => s.date === column.iso && s.status !== 'cancelada',
+  )
+
+  return (
+    <Card className={cn(isToday && 'ring-1 ring-primary/25')}>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-base">
+            {column.weekday}{' '}
+            <span className="font-normal text-muted-foreground">
+              {column.dayNumber} {column.monthLabel}
+            </span>
+          </CardTitle>
+          <Badge variant="secondary">{dayItems.length}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {daySlots.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Estúdio fechado</p>
+        ) : (
+          daySlots.map((slot) => {
+            const slotItems = dayItems
+              .filter((s) => s.time === slot)
+              .sort((a, b) => a.studentId.localeCompare(b.studentId))
+            const occupied = countActiveInSlot(sessions, column.iso, slot)
+            const full = occupied >= capacity
+            return (
+              <div
+                key={slot}
+                className="flex items-start gap-3 rounded-lg border p-2"
+              >
+                <div className="flex w-12 shrink-0 flex-col gap-1 pt-1">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {slot}
+                  </span>
+                  <span className="text-[10px] tabular-nums text-muted-foreground">
+                    {occupied}/{capacity}
+                  </span>
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  {slotItems.map((session) => (
+                    <SessionCard
+                      key={session.id}
+                      session={session}
+                      onStatusChange={onStatusChange}
+                      onEdit={onEdit}
+                    />
+                  ))}
+                  {!full ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="justify-start text-muted-foreground"
+                      onClick={() => onBook(column.iso, slot)}
+                    >
+                      <Plus data-icon="inline-start" />
+                      Marcar
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            )
+          })
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -914,14 +748,15 @@ function SessionMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label="Ações de frequência"
-      >
-        <MoreHorizontal className="size-3.5" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-52">
+        render={
+          <Button variant="ghost" size="icon-sm" className="size-6 shrink-0">
+            <MoreHorizontal className="size-3.5" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>Frequência / presença</DropdownMenuLabel>
+          <DropdownMenuLabel>Frequência</DropdownMenuLabel>
           {actions.map((action) => (
             <DropdownMenuItem
               key={action.status}
@@ -946,31 +781,5 @@ function SessionMenu({
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-function StatPill({
-  label,
-  value,
-  accent,
-}: {
-  label: string
-  value: number
-  accent?: boolean
-}) {
-  return (
-    <Card>
-      <CardContent className="pt-5 pb-4">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p
-          className={cn(
-            'mt-1 text-2xl font-semibold tracking-tight',
-            accent && 'text-destructive',
-          )}
-        >
-          {value}
-        </p>
-      </CardContent>
-    </Card>
   )
 }

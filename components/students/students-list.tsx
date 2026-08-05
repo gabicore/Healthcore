@@ -196,7 +196,7 @@ export function StudentsList() {
           setError(
             err instanceof Error
               ? err.message
-              : 'Não foi possível carregar os alunos',
+              : 'Não foi possível carregar as pessoas',
           )
         }
       })
@@ -268,7 +268,7 @@ export function StudentsList() {
         {loading ? (
           <Empty className="py-12">
             <EmptyHeader>
-              <EmptyTitle>Carregando alunos…</EmptyTitle>
+              <EmptyTitle>Carregando pessoas…</EmptyTitle>
             </EmptyHeader>
           </Empty>
         ) : error ? (
@@ -284,7 +284,7 @@ export function StudentsList() {
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <SortableHead
-                    label="Aluno"
+                    label="Pessoa"
                     sortKey="name"
                     activeKey={sortKey}
                     direction={sortDir}
@@ -370,7 +370,7 @@ export function StudentsList() {
                           variant="ghost"
                           size="icon-sm"
                           className="text-muted-foreground hover:text-destructive"
-                          title="Excluir aluno"
+                          title="Excluir pessoa"
                           aria-label={`Excluir ${s.name}`}
                           onClick={(e) => {
                             e.stopPropagation()
@@ -389,7 +389,7 @@ export function StudentsList() {
             {filtered.length === 0 ? (
               <Empty className="py-12">
                 <EmptyHeader>
-                  <EmptyTitle>Nenhum aluno encontrado</EmptyTitle>
+                  <EmptyTitle>Nenhuma pessoa encontrada</EmptyTitle>
                   <EmptyDescription>
                     Ajuste a busca ou os filtros para ver resultados.
                   </EmptyDescription>

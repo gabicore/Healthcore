@@ -138,7 +138,7 @@ export function StudentContractsPanel({
               </EmptyMedia>
               <EmptyTitle className="text-center">Nenhum contrato</EmptyTitle>
               <EmptyDescription className="whitespace-nowrap text-center">
-                Crie o primeiro contrato deste aluno para começar.
+                Crie o primeiro contrato desta pessoa para começar.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>

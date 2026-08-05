@@ -41,7 +41,7 @@ export async function registerUser(
       where: { id: input.studentId },
     })
     if (!student) {
-      throw new AppError('Aluno não encontrado', 404, 'NOT_FOUND')
+      throw new AppError('Pessoa não encontrada', 404, 'NOT_FOUND')
     }
   }
 

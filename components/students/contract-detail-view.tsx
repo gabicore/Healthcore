@@ -838,7 +838,7 @@ export function ContractDetailView({
             {editing ? (
               <FieldGroup className="gap-6">
                 <div>
-                  <h3 className="mb-3 text-sm font-medium">Dados do aluno</h3>
+                  <h3 className="mb-3 text-sm font-medium">Dados da pessoa</h3>
                   <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
                     <DetailItem label="Nome" value={student.name} />
                     <DetailItem label="CPF" value={student.cpf} />
@@ -1089,7 +1089,7 @@ export function ContractDetailView({
             ) : (
               <div className="flex flex-col gap-6">
                 <div>
-                  <h3 className="mb-1 text-sm font-medium">Dados do aluno</h3>
+                  <h3 className="mb-1 text-sm font-medium">Dados da pessoa</h3>
                   <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
                     <DetailItem label="Nome" value={student.name} />
                     <DetailItem label="CPF" value={student.cpf} />

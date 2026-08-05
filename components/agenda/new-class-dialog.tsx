@@ -62,7 +62,7 @@ type NewClassDialogProps = {
   sessions?: ClassSession[]
   /** Quando informado, o diálogo edita a aula existente. */
   editingSession?: ClassSession | null
-  onCreate: (session: ClassSession) => void
+  onCreate: (session: ClassSession) => void | Promise<void>
 }
 
 export function NewClassDialog({
@@ -71,7 +71,7 @@ export function NewClassDialog({
   defaultType = 'reposicao',
   triggerLabel = 'Marcar reposição',
   title = 'Marcar aula',
-  description = 'A grade fixa vem do plano de cada aluno. Aqui você marca reposição, avulsa ou aula experimental.',
+  description = 'A grade fixa vem do plano de cada pessoa. Aqui você marca reposição, avulsa ou aula experimental.',
   hideTrigger = false,
   open: controlledOpen,
   onOpenChange,
@@ -96,6 +96,7 @@ export function NewClassDialog({
   )
   const [professionalId, setProfessionalId] = useState('')
   const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const [hoursTick, setHoursTick] = useState(0)
   const isExperimental = type === 'experimental'
@@ -154,7 +155,7 @@ export function NewClassDialog({
       })
       .catch(() => {
         if (!cancelled) {
-          toast.error('Não foi possível carregar alunos/profissionais')
+          toast.error('Não foi possível carregar pessoas/profissionais')
         }
       })
     return () => {
@@ -225,8 +226,9 @@ export function NewClassDialog({
     if (!next) resetForm()
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (saving) return
 
     if (!date || !time) {
       toast.error('Preencha data e horário')
@@ -235,11 +237,11 @@ export function NewClassDialog({
 
     if (isExperimental) {
       if (!guestName.trim() && !studentId) {
-        toast.error('Informe o nome do cliente ou selecione um aluno')
+        toast.error('Informe o nome do cliente ou selecione uma pessoa')
         return
       }
     } else if (!studentId) {
-      toast.error('Selecione o aluno')
+      toast.error('Selecione a pessoa')
       return
     }
 
@@ -262,7 +264,7 @@ export function NewClassDialog({
 
     if (remaining <= 0) {
       toast.error('Horário lotado', {
-        description: `Máximo de ${slotCapacity} alunos por horário.`,
+        description: `Máximo de ${slotCapacity} pessoas por horário.`,
       })
       return
     }
@@ -292,7 +294,7 @@ export function NewClassDialog({
       toast.error(
         isExperimental
           ? 'Cliente já está neste horário'
-          : 'Aluno já está neste horário',
+          : 'Pessoa já está neste horário',
       )
       return
     }
@@ -309,31 +311,37 @@ export function NewClassDialog({
         : editingSession!.status
       : 'agendada'
 
-    onCreate({
-      id:
-        editingSession?.id ??
-        `manual-${resolvedStudentId}-${date}-${time}-${Date.now()}`,
-      studentId: resolvedStudentId,
-      guestName: resolvedGuestName,
-      date,
-      weekday,
-      time,
-      status,
-      type: sessionType,
-      professionalId: professionalId || undefined,
-      notes: notes.trim() || undefined,
-    })
-
-    handleOpenChange(false)
-    toast.success(
-      isEditing
-        ? 'Aula atualizada'
-        : sessionType === 'reposicao'
-          ? 'Reposição agendada'
-          : sessionType === 'experimental'
-            ? 'Aula experimental marcada'
-            : 'Aula avulsa marcada',
-    )
+    setSaving(true)
+    try {
+      await onCreate({
+        id:
+          editingSession?.id ??
+          `manual-${resolvedStudentId}-${date}-${time}-${Date.now()}`,
+        studentId: resolvedStudentId,
+        guestName: resolvedGuestName,
+        date,
+        weekday,
+        time,
+        status,
+        type: sessionType,
+        professionalId: professionalId || undefined,
+        notes: notes.trim() || undefined,
+      })
+      handleOpenChange(false)
+      toast.success(
+        isEditing
+          ? 'Aula atualizada'
+          : sessionType === 'reposicao'
+            ? 'Reposição agendada'
+            : sessionType === 'experimental'
+              ? 'Aula experimental marcada'
+              : 'Aula avulsa marcada',
+      )
+    } catch {
+      /* Erro já tratado em onCreate / toast do servidor */
+    } finally {
+      setSaving(false)
+    }
   }
 
   const typeLabel: Record<'reposicao' | 'avulsa' | 'experimental', string> = {
@@ -416,7 +424,7 @@ export function NewClassDialog({
 
             <Field>
               <FieldLabel>
-                {isExperimental ? 'Aluno cadastrado (opcional)' : 'Aluno'}
+                {isExperimental ? 'Pessoa cadastrada (opcional)' : 'Pessoa'}
               </FieldLabel>
               <Select
                 value={studentId || null}
@@ -427,7 +435,7 @@ export function NewClassDialog({
                     placeholder={
                       isExperimental
                         ? 'Opcional — se já tiver cadastro'
-                        : 'Selecione o aluno'
+                        : 'Selecione a pessoa'
                     }
                   />
                 </SelectTrigger>
@@ -556,12 +564,14 @@ export function NewClassDialog({
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={remaining === 0}>
-              {isEditing
-                ? 'Salvar alterações'
-                : isExperimental
-                  ? 'Salvar experimental'
-                  : 'Salvar aula'}
+            <Button type="submit" disabled={remaining === 0 || saving}>
+              {saving
+                ? 'Salvando…'
+                : isEditing
+                  ? 'Salvar alterações'
+                  : isExperimental
+                    ? 'Salvar experimental'
+                    : 'Salvar aula'}
             </Button>
           </DialogFooter>
         </form>

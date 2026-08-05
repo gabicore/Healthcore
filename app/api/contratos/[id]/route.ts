@@ -65,7 +65,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       } catch (error) {
         if (
           error instanceof Error &&
-          error.message === 'Aluno sem e-mail cadastrado'
+          error.message === 'Pessoa sem e-mail cadastrado'
         ) {
           return jsonError(error.message, 400)
         }

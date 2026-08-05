@@ -31,7 +31,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     } catch (error) {
       if (
         error instanceof Error &&
-        error.message === 'Aluno não encontrado'
+        error.message === 'Pessoa não encontrada'
       ) {
         return jsonError(error.message, 404)
       }

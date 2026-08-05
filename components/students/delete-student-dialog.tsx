@@ -52,14 +52,14 @@ export function DeleteStudentDialog({
     try {
       await deleteStudent(studentId, adminPassword)
       removeStudentFromStore(studentId)
-      toast.success('Aluno excluído', { description: studentName })
+      toast.success('Pessoa excluída', { description: studentName })
       onOpenChange(false)
       onDeleted()
     } catch (err) {
       toast.error(
         err instanceof Error
           ? err.message
-          : 'Não foi possível excluir o aluno',
+          : 'Não foi possível excluir a pessoa',
       )
     } finally {
       setDeleting(false)
@@ -70,7 +70,7 @@ export function DeleteStudentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" showCloseButton={!deleting}>
         <DialogHeader>
-          <DialogTitle>Excluir perfil do aluno?</DialogTitle>
+          <DialogTitle>Excluir perfil da pessoa?</DialogTitle>
           <DialogDescription>
             Esta ação remove permanentemente o perfil de{' '}
             <span className="font-medium text-foreground">{studentName}</span>,

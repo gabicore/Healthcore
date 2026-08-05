@@ -313,7 +313,7 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
       (s) => s.weekday === slotWeekday && s.time === slotTime,
     )
     if (exists) {
-      toast.error('Este horário já está na agenda do aluno')
+      toast.error('Este horário já está na agenda da pessoa')
       return
     }
     const next: ScheduleSlot = { weekday: slotWeekday, time: slotTime }
@@ -337,7 +337,7 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.name.trim()) {
-      toast.error('Informe o nome do aluno')
+      toast.error('Informe o nome da pessoa')
       return
     }
     // Com contrato ativo, plano/cobrança não saem deste formulário.
@@ -368,7 +368,7 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
       }),
     })
     setOpen(false)
-    toast.success('Aluno atualizado')
+    toast.success('Pessoa atualizada')
   }
 
   return (
@@ -383,7 +383,7 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
       />
       <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="border-b px-4 py-4">
-          <DialogTitle>Editar aluno</DialogTitle>
+          <DialogTitle>Editar pessoa</DialogTitle>
           <DialogDescription>
             Atualize dados pessoais, clínico, plano e agenda fixa.
           </DialogDescription>

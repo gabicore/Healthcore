@@ -4,16 +4,13 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowUpRight,
-  CalendarClock,
   NotebookPen,
   Users,
   Wallet,
 } from 'lucide-react'
-import { toast } from 'sonner'
 
 import { PageHeader } from '@/components/page-header'
 import { AttendanceChart } from '@/components/dashboard/dashboard-charts'
-import { NewClassDialog } from '@/components/agenda/new-class-dialog'
 import { AttendanceBadge } from '@/components/status-badges'
 import {
   Card,
@@ -32,22 +29,17 @@ import {
   formatCurrency,
   formatShortDate,
   formatWeekdayLabel,
-  getDayExperimentalSessions,
   getDaySessions,
   getStudent,
   getWeekdayFromDate,
   initials,
   sessionParticipantName,
-  toIsoDate,
-  upsertAttendanceSession,
   replaceStudentsInStore,
-  type ClassSession,
 } from '@/lib/data'
 import { fetchStudents } from '@/lib/students-api'
 
 export default function DashboardPage() {
   const today = useMemo(() => new Date(), [])
-  const todayIso = toIsoDate(today)
   const todayWeekday = getWeekdayFromDate(today)
   const [agendaTick, setAgendaTick] = useState(0)
 
@@ -82,20 +74,6 @@ export default function DashboardPage() {
     return getDaySessions(today)
   }, [today, agendaTick])
 
-  const experimentalToday = useMemo(() => {
-    void agendaTick
-    return getDayExperimentalSessions(today)
-  }, [today, agendaTick])
-
-  /** Horários únicos com aula no dia (ordenados). */
-  const todaySlots = useMemo(
-    () =>
-      [...new Set(todayAgenda.map((s) => s.time))].sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [todayAgenda],
-  )
-
   /** Mesma ordem/alunos da agenda do dia (1 entrada por aluno). */
   const dayEvolutions = useMemo(() => {
     const seen = new Set<string>()
@@ -124,19 +102,6 @@ export default function DashboardPage() {
     ? formatWeekdayLabel(todayWeekday)
     : 'Domingo · sem aulas'
 
-  function handleCreateExperimental(session: ClassSession) {
-    try {
-      upsertAttendanceSession(session)
-      setAgendaTick((n) => n + 1)
-    } catch (err) {
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : 'Não foi possível agendar neste horário',
-      )
-    }
-  }
-
   return (
     <>
       <PageHeader
@@ -145,147 +110,11 @@ export default function DashboardPage() {
       >
         <Button size="sm" nativeButton={false} render={<Link href="/alunos" />}>
           <Users data-icon="inline-start" />
-          Ver alunos
+          Ver pessoas
         </Button>
       </PageHeader>
 
       <div className="flex flex-col gap-6 p-4 md:p-6">
-        <div className="grid grid-cols-1 gap-4">
-          <Card>
-            <CardContent className="flex flex-wrap items-start justify-between gap-6 pt-6">
-              <div className="flex items-start gap-3">
-                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
-                  <CalendarClock className="size-5" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm text-muted-foreground">
-                    Aulas hoje
-                  </span>
-                  <span className="text-2xl font-semibold tracking-tight tabular-nums">
-                    {todaySlots.length}
-                  </span>
-                </div>
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col gap-2 sm:items-end">
-                <span className="text-xs text-muted-foreground">
-                  {dayHint} · {formatShortDate(todayIso)}
-                </span>
-                {todaySlots.length > 0 ? (
-                  <div className="flex flex-wrap gap-2 sm:justify-end">
-                    {todaySlots.map((time) => (
-                      <Badge
-                        key={time}
-                        variant="outline"
-                        className="font-mono tabular-nums"
-                      >
-                        {time}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Nenhum horário com aula.
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Aulas experimentais</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              {!todayWeekday ? (
-                <p className="py-2 text-sm text-muted-foreground">
-                  Sem aulas aos domingos.
-                </p>
-              ) : experimentalToday.length === 0 ? (
-                <p className="py-2 text-sm text-muted-foreground">
-                  Nenhuma aula experimental marcada para hoje.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-1">
-                  {experimentalToday.map((session) => {
-                    const name = sessionParticipantName(session)
-                    const student = getStudent(session.studentId)
-                    const content = (
-                      <>
-                        <Badge
-                          variant="outline"
-                          className="font-mono tabular-nums"
-                        >
-                          {session.time}
-                        </Badge>
-                        <Avatar className="size-8">
-                          <AvatarFallback className="text-xs">
-                            {initials(name)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">
-                            <span className="text-muted-foreground">
-                              {formatShortDate(session.date)}
-                            </span>
-                            <span className="mx-1.5 text-muted-foreground">
-                              ·
-                            </span>
-                            {name}
-                          </p>
-                          {session.notes ? (
-                            <p className="truncate text-[11px] text-muted-foreground">
-                              {session.notes}
-                            </p>
-                          ) : null}
-                        </div>
-                        <AttendanceBadge status={session.status} />
-                      </>
-                    )
-                    return student ? (
-                      <Link
-                        key={session.id}
-                        href={`/alunos/${student.id}`}
-                        className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-muted"
-                      >
-                        {content}
-                      </Link>
-                    ) : (
-                      <div
-                        key={session.id}
-                        className="flex items-center gap-3 rounded-lg px-2 py-2"
-                      >
-                        {content}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <NewClassDialog
-                  defaultType="experimental"
-                  defaultDate={todayIso}
-                  triggerLabel="Nova experimental"
-                  title="Aula experimental"
-                  description="Cadastre um cliente em aula teste. Pode informar só o nome ou vincular a um aluno já cadastrado."
-                  sessions={todayAgenda}
-                  onCreate={handleCreateExperimental}
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  nativeButton={false}
-                  render={<Link href="/agenda" />}
-                >
-                  Ver na grade
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card>
             <CardHeader className="flex-row items-center justify-between gap-2">
@@ -374,7 +203,7 @@ export default function DashboardPage() {
                 </p>
               ) : dayEvolutions.length === 0 ? (
                 <p className="py-4 text-sm text-muted-foreground">
-                  Nenhum aluno na agenda de hoje.
+                  Nenhuma pessoa na agenda de hoje.
                 </p>
               ) : (
                 dayEvolutions.map(({ student, evolution, time }, i) => (

@@ -254,7 +254,7 @@ export async function createStudentRecord(input: CreateStudentInput) {
   // Agenda fixa só após contrato ativo — cadastro inicia sem horários.
   if ((input.schedule ?? []).length > 0) {
     throw new Error(
-      'Defina a agenda fixa após assinar um contrato ativo do aluno',
+      'Defina a agenda fixa após assinar um contrato ativo da pessoa',
     )
   }
 
@@ -313,6 +313,8 @@ export async function createStudentRecord(input: CreateStudentInput) {
       restrictions: input.restrictions ?? '',
       medications: input.medications ?? '',
       notes: input.notes ?? '',
+      usesPilates: input.usesPilates ?? true,
+      usesClinic: input.usesClinic ?? true,
       planId,
       monthlyValue,
       discountPercent: discount,
@@ -344,12 +346,15 @@ export async function updateStudentRecord(
       input.paymentMethod !== undefined
     if (locked) {
       throw new Error(
-        'Com contrato ativo, altere plano e cobrança pelo contrato do aluno',
+        'Com contrato ativo, altere plano e cobrança pelo contrato da pessoa',
       )
     }
   }
 
-  let monthlyValue = decimalToNumber(existing.monthlyValue)
+  let monthlyValue =
+    existing.monthlyValue != null
+      ? decimalToNumber(existing.monthlyValue)
+      : 0
   let planId = existing.planId
   let discountPercent = existing.discountPercent
 
@@ -365,7 +370,11 @@ export async function updateStudentRecord(
 
   if (input.discountPercent !== undefined) {
     discountPercent = input.discountPercent
-    if (input.monthlyValue === undefined && input.planId === undefined) {
+    if (
+      input.monthlyValue === undefined &&
+      input.planId === undefined &&
+      planId
+    ) {
       const plan = await prisma.plan.findUnique({ where: { id: planId } })
       if (plan) {
         monthlyValue = priceWithDiscount(Number(plan.price), discountPercent)
@@ -396,10 +405,13 @@ export async function updateStudentRecord(
     const governing = await findGoverningContract(id)
     if (!governing && input.schedule.length > 0) {
       throw new Error(
-        'Assine um contrato ativo antes de definir a agenda fixa do aluno',
+        'Assine um contrato ativo antes de definir a agenda fixa da pessoa',
       )
     }
     await assertScheduleFitsStudioHours(input.schedule)
+    if (!planId) {
+      throw new Error('Defina um plano antes de configurar a agenda fixa')
+    }
     await assertScheduleFitsPlanFrequency(id, input.schedule, planId)
 
     const effectiveFromIso =
@@ -531,6 +543,12 @@ export async function updateStudentRecord(
         ? { medications: input.medications }
         : {}),
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
+      ...(input.usesPilates !== undefined
+        ? { usesPilates: input.usesPilates }
+        : {}),
+      ...(input.usesClinic !== undefined
+        ? { usesClinic: input.usesClinic }
+        : {}),
       planId,
       monthlyValue,
       discountPercent,

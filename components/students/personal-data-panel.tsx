@@ -194,6 +194,8 @@ function buildPayload(form: PersonalDataForm) {
     emergencyRelation: form.emergencyRelation.trim(),
     emergencyPhone: form.emergencyPhone.trim(),
     emergencyContact,
+    usesPilates: true,
+    usesClinic: true,
   }
 }
 
@@ -335,7 +337,10 @@ export function PersonalDataPanel({
 
     const missingKeys = Object.keys(errors) as FieldKey[]
     if (missingKeys.length > 0) {
-      const labels = missingKeys.map((key) => FIELD_LABELS[key])
+      const labels = missingKeys.map(
+        (key) =>
+          (FIELD_LABELS as Partial<Record<FieldKey, string>>)[key] ?? key,
+      )
       toast.error('Preencha os campos obrigatórios', {
         description:
           labels.length <= 4
@@ -355,7 +360,7 @@ export function PersonalDataPanel({
       if (isCreate) {
         if (!onCreate) throw new Error('Cadastro indisponível')
         await onCreate(payload)
-        toast.success('Aluno cadastrado')
+        toast.success('Pessoa cadastrada')
       } else {
         if (!onSave) throw new Error('Salvar indisponível')
         await onSave(payload)
@@ -368,7 +373,7 @@ export function PersonalDataPanel({
         error instanceof Error
           ? error.message
           : isCreate
-            ? 'Não foi possível cadastrar o aluno'
+            ? 'Não foi possível cadastrar a pessoa'
             : 'Não foi possível salvar os dados',
       )
     } finally {
@@ -426,7 +431,7 @@ export function PersonalDataPanel({
                   ? 'Cadastrando…'
                   : 'Salvando…'
                 : isCreate
-                  ? 'Cadastrar aluno'
+                  ? 'Cadastrar pessoa'
                   : 'Salvar'}
             </Button>
           </>
@@ -547,7 +552,7 @@ export function PersonalDataPanel({
                 </div>
               </Field>
               <Field>
-                <FieldLabel>Aluno desde</FieldLabel>
+                <FieldLabel>Cadastrado desde</FieldLabel>
                 <Input
                   readOnly
                   value={
@@ -691,7 +696,7 @@ export function PersonalDataPanel({
               </dd>
             </div>
             <ReadOnlyField
-              label="Aluno desde"
+              label="Cadastrado desde"
               value={
                 hasSignedContract ? formatShortDate(student.since) : '—'
               }

@@ -37,7 +37,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const updated = await upsertFixedSessionAttendance(id, input)
     return jsonOk(updated)
   } catch (error) {
-    if (error instanceof Error && error.message === 'Aluno não encontrado') {
+    if (error instanceof Error && error.message === 'Pessoa não encontrada') {
       return jsonError(error.message, 404)
     }
     return handleRouteError(error)

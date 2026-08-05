@@ -1,19 +1,22 @@
 import type {
   Contract,
   ContractHistoryEntry,
+  ContractSignatureInfo,
   ContractVersion,
   PlanPeriod,
 } from '@/lib/data'
 import {
   contractEndDateForPeriod,
-  contractTotalClasses,
   defaultContractClauses,
 } from '@/lib/data'
+import {
+  generateSigningToken,
+  signingUrlForToken,
+} from '@/lib/contract-document'
 import { DEFAULT_STUDIO_ID } from '@/lib/constants'
 import {
   decimalToNumber,
   fromDbPaymentMethod,
-  fromDbWeekday,
   parseIsoDate,
   toDbPaymentMethod,
   toIsoDateOnly,
@@ -59,10 +62,14 @@ export async function syncStudentWithActiveContract(contract: DbContract) {
 
   const student = await prisma.student.findUnique({
     where: { id: contract.studentId },
-    include: { schedule: true },
+    include: {
+      schedule: { where: { effectiveTo: null } },
+    },
   })
   if (!student) return
 
+  // Só a grade atual (effectiveTo null) conta no limite semanal —
+  // períodos históricos não podem ser apagados no sync a cada refresh.
   const overflow = [...student.schedule]
     .sort((a, b) =>
       `${a.weekday}${a.time}`.localeCompare(`${b.weekday}${b.time}`),
@@ -173,7 +180,33 @@ function asVersions(value: Prisma.JsonValue): ContractVersion[] {
     .filter((e): e is ContractVersion => e !== null)
 }
 
-export function serializeContract(row: DbContract): Contract {
+type ContractWithSignature = DbContract & {
+  signingToken?: string | null
+  validationCode?: string | null
+  signature?: {
+    id: string
+    signerName: string
+    signatureImage: string
+    signedAt: Date
+    validationCode: string
+    documentHash: string
+    contractVersion: number
+  } | null
+}
+
+export function serializeContract(row: ContractWithSignature): Contract {
+  const electronicSignature: ContractSignatureInfo | undefined = row.signature
+    ? {
+        id: row.signature.id,
+        signerName: row.signature.signerName,
+        signatureImage: row.signature.signatureImage,
+        signedAt: row.signature.signedAt.toISOString(),
+        validationCode: row.signature.validationCode,
+        documentHash: row.signature.documentHash,
+        contractVersion: row.signature.contractVersion,
+      }
+    : undefined
+
   return {
     id: row.id,
     studentId: row.studentId,
@@ -194,6 +227,10 @@ export function serializeContract(row: DbContract): Contract {
     clauses: asStringArray(row.clauses),
     signedAt: row.signedAt ? toIsoDateOnly(row.signedAt) : undefined,
     signatureName: row.signatureName ?? undefined,
+    signingToken: row.signingToken ?? undefined,
+    validationCode:
+      row.validationCode ?? electronicSignature?.validationCode ?? undefined,
+    electronicSignature,
     version: row.version,
     previousVersions: asVersions(row.previousVersions),
     history: asHistory(row.history),
@@ -229,13 +266,17 @@ async function nextContractNumber(year: number) {
 export async function listStudentContracts(studentId: string) {
   const rows = await prisma.contract.findMany({
     where: { studentId },
+    include: { signature: true },
     orderBy: { startDate: 'desc' },
   })
   return rows.map(serializeContract)
 }
 
 export async function getContractById(id: string) {
-  const row = await prisma.contract.findUnique({ where: { id } })
+  const row = await prisma.contract.findUnique({
+    where: { id },
+    include: { signature: true },
+  })
   return row ? serializeContract(row) : null
 }
 
@@ -272,6 +313,7 @@ export async function createContractRecord(
   const number = input.number ?? (await nextContractNumber(year))
   const today = new Date().toISOString().slice(0, 10)
   const by = await historyActor()
+  const signingToken = generateSigningToken()
 
   const created = await prisma.contract.create({
     data: {
@@ -282,7 +324,7 @@ export async function createContractRecord(
       planLabel: input.planLabel ?? plan.name,
       startDate: start,
       endDate: end,
-      status: input.status ?? 'rascunho',
+      status: 'rascunho',
       monthlyValue:
         input.monthlyValue ?? decimalToNumber(student.monthlyValue),
       discountPercent:
@@ -297,12 +339,14 @@ export async function createContractRecord(
       lateFeePercent: input.lateFeePercent ?? 2,
       interestPercent: input.interestPercent ?? 1,
       clauses: (input.clauses ?? defaultContractClauses) as Prisma.InputJsonValue,
+      signingToken,
       version: 1,
       previousVersions: [] as Prisma.InputJsonValue,
       history: [
         { at: today, action: 'Contrato criado', by },
       ] as Prisma.InputJsonValue,
     },
+    include: { signature: true },
   })
   if (created.status === 'ativo') {
     await endOtherActiveContracts(studentId, created.id)
@@ -314,9 +358,44 @@ export async function createContractRecord(
 export async function updateContractRecord(
   id: string,
   input: UpdateContractInput,
+  options?: {
+    status?: Contract['status']
+  },
 ) {
-  const existing = await prisma.contract.findUnique({ where: { id } })
+  const existing = await prisma.contract.findUnique({
+    where: { id },
+    include: { signature: true },
+  })
   if (!existing) return null
+
+  const contentKeys: (keyof UpdateContractInput)[] = [
+    'planId',
+    'planLabel',
+    'number',
+    'startDate',
+    'endDate',
+    'monthlyValue',
+    'discountPercent',
+    'discountNote',
+    'dueDay',
+    'paymentMethod',
+    'financialResponsible',
+    'lateFeePercent',
+    'interestPercent',
+    'clauses',
+  ]
+  const touchesContent = contentKeys.some((key) => input[key] !== undefined)
+  if (
+    touchesContent &&
+    (existing.status === 'ativo' ||
+      existing.status === 'encerrado' ||
+      existing.status === 'cancelado' ||
+      existing.signature)
+  ) {
+    throw new Error(
+      'Contrato assinado ou encerrado não pode ser alterado. Crie uma renovação para nova versão.',
+    )
+  }
 
   if (input.planId) {
     const plan = await prisma.plan.findUnique({ where: { id: input.planId } })
@@ -330,6 +409,8 @@ export async function updateContractRecord(
     history = [{ at: today, action: input.historyAction, by }, ...history]
   }
 
+  const nextStatus = options?.status
+
   const updated = await prisma.contract.update({
     where: { id },
     data: {
@@ -342,7 +423,7 @@ export async function updateContractRecord(
       ...(input.endDate !== undefined
         ? { endDate: parseIsoDate(input.endDate) }
         : {}),
-      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(nextStatus !== undefined ? { status: nextStatus } : {}),
       ...(input.monthlyValue !== undefined
         ? { monthlyValue: input.monthlyValue }
         : {}),
@@ -378,6 +459,7 @@ export async function updateContractRecord(
         : {}),
       history: history as Prisma.InputJsonValue,
     },
+    include: { signature: true },
   })
 
   const statusBecameActive =
@@ -404,17 +486,36 @@ export async function updateContractRecord(
 }
 
 export async function sendContractForSignatureRecord(id: string) {
-  return updateContractRecord(id, {
-    status: 'pendente_assinatura',
-    historyAction: 'Enviado para assinatura eletrônica',
+  const existing = await prisma.contract.findUnique({
+    where: { id },
+    select: { id: true, status: true, signature: { select: { id: true } } },
   })
+  if (!existing) return null
+  if (existing.signature || existing.status === 'ativo') {
+    throw new Error('Contrato já assinado')
+  }
+
+  const token = generateSigningToken()
+  await prisma.contract.update({
+    where: { id },
+    data: {
+      signingToken: token,
+    },
+  })
+
+  return updateContractRecord(
+    id,
+    { historyAction: 'Enviado para assinatura eletrônica' },
+    { status: 'pendente_assinatura' },
+  )
 }
 
 export async function rescindContractRecord(id: string) {
-  return updateContractRecord(id, {
-    status: 'cancelado',
-    historyAction: 'Contrato rescindido',
-  })
+  return updateContractRecord(
+    id,
+    { historyAction: 'Contrato rescindido' },
+    { status: 'cancelado' },
+  )
 }
 
 export async function renewContractRecord(id: string) {
@@ -453,6 +554,7 @@ export async function renewContractRecord(id: string) {
       lateFeePercent: current.lateFeePercent,
       interestPercent: current.interestPercent,
       clauses: current.clauses as Prisma.InputJsonValue,
+      signingToken: generateSigningToken(),
       version: 1,
       previousVersions: [
         {
@@ -470,12 +572,16 @@ export async function renewContractRecord(id: string) {
         },
       ] as Prisma.InputJsonValue,
     },
+    include: { signature: true },
   })
 
-  await updateContractRecord(current.id, {
-    status: current.status === 'ativo' ? 'encerrado' : current.status,
-    historyAction: `Encerrado por renovação (${number})`,
-  })
+  await updateContractRecord(
+    current.id,
+    { historyAction: `Encerrado por renovação (${number})` },
+    {
+      status: current.status === 'ativo' ? 'encerrado' : current.status,
+    },
+  )
 
   return serializeContract(renewed)
 }
@@ -491,22 +597,39 @@ export async function signContractRecord(
     existing.financialResponsible ||
     'Assinado digitalmente'
   const today = new Date().toISOString().slice(0, 10)
-  return updateContractRecord(id, {
-    status: 'ativo',
-    signedAt: today,
-    signatureName: name,
-    historyAction: 'Assinatura registrada · contrato ativado',
-  })
+  return updateContractRecord(
+    id,
+    {
+      signedAt: today,
+      signatureName: name,
+      historyAction: 'Assinatura registrada · contrato ativado',
+    },
+    { status: 'ativo' },
+  )
 }
 
 export async function emailContractRecord(id: string) {
-  const contract = await getContractById(id)
+  let contract = await getContractById(id)
   if (!contract) return null
 
-  const student = await prisma.student.findUnique({
+  if (
+    !contract.signingToken &&
+    contract.status !== 'ativo' &&
+    contract.status !== 'encerrado' &&
+    contract.status !== 'cancelado'
+  ) {
+    const token = generateSigningToken()
+    await prisma.contract.update({
+      where: { id },
+      data: { signingToken: token },
+    })
+    contract = (await getContractById(id)) ?? contract
+  }
+
+  const studentRow = await prisma.student.findUnique({
     where: { id: contract.studentId },
   })
-  if (!student?.email) {
+  if (!studentRow?.email) {
     throw new Error('Aluno sem e-mail cadastrado')
   }
 
@@ -520,76 +643,88 @@ export async function emailContractRecord(id: string) {
           (contract.monthlyValue / (1 - contract.discountPercent / 100)) * 100,
         ) / 100
       : contract.monthlyValue
-  const scheduleRows = await prisma.scheduleSlot.findMany({
-    where: { studentId: contract.studentId },
-    orderBy: [{ weekday: 'asc' }, { time: 'asc' }],
-  })
-  const totalClasses = plan
-    ? contractTotalClasses({
-        startDate: contract.startDate,
-        endDate: contract.endDate,
-        frequency: plan.frequency,
-        schedule: scheduleRows.map((s) => ({
-          weekday: fromDbWeekday(s.weekday),
-          time: s.time,
-        })),
-        planId: plan.id,
-      })
-    : 0
 
-  const { emailSender } = await import('@/lib/auth/email/console-sender')
-  const studio = await prisma.studio.findUnique({
+  const {
+    createEmailSender,
+    resolveEmailTransport,
+  } = await import('@/lib/auth/email')
+  const {
+    buildContractEmailHtml,
+    buildContractEmailText,
+  } = await import('@/lib/contract-email-html')
+  const studioRow = await prisma.studio.findUnique({
     where: { id: DEFAULT_STUDIO_ID },
   })
-  const subject = `Contrato ${contract.number} — ${studio?.name ?? 'HealthCore'}`
-  const text = [
-    `Olá ${student.name},`,
-    '',
-    `Segue o resumo do contrato ${contract.number}:`,
-    '',
-    'Contratado (estúdio):',
-    `Nome: ${studio?.name ?? '—'}`,
-    `Responsável: ${studio?.owner ?? '—'}`,
-    `CNPJ: ${studio?.cnpj || '—'}`,
-    `Telefone: ${studio?.phone ?? '—'}`,
-    `E-mail: ${studio?.email ?? '—'}`,
-    `Endereço: ${studio?.address || '—'}`,
-    '',
-    `Plano: ${contract.planLabel}`,
-    `Aulas do contrato: ${totalClasses > 0 ? `${totalClasses} aulas` : '—'}`,
-    `Valor do plano: R$ ${planPrice.toFixed(2)}`,
-    `Desconto: ${
-      contract.discountPercent > 0
-        ? `${contract.discountPercent}%${
-            contract.discountNote ? ` · ${contract.discountNote}` : ''
-          }`
-        : 'Sem desconto'
-    }`,
-    `Valor final: R$ ${contract.monthlyValue.toFixed(2)}`,
-    `Vigência: ${contract.startDate} a ${contract.endDate}${
-      totalClasses > 0 ? ` · ${totalClasses} aulas` : ''
-    }`,
-    `Status: ${contract.status}`,
-    `Responsável financeiro: ${contract.financialResponsible}`,
-    '',
-    'Cláusulas:',
-    ...contract.clauses.map((c, i) => `${i + 1}. ${c}`),
-    '',
-    studio?.name ?? 'HealthCore',
-  ].join('\n')
+  const studio = studioRow
+    ? {
+        id: studioRow.id,
+        name: studioRow.name,
+        owner: studioRow.owner,
+        email: studioRow.email,
+        phone: studioRow.phone,
+        cnpj: studioRow.cnpj ?? '',
+        address: studioRow.address ?? '',
+        plan: 'Profissional' as const,
+      }
+    : null
 
-  await emailSender.send({
-    to: student.email,
+  const student = {
+    name: studentRow.name,
+    birthDate: toIsoDateOnly(studentRow.birthDate),
+    cpf: studentRow.cpf ?? '',
+    phone: studentRow.phone ?? '',
+    email: studentRow.email,
+    cep: studentRow.cep ?? '',
+    street: studentRow.street ?? '',
+    addressNumber: studentRow.addressNumber ?? '',
+    neighborhood: studentRow.neighborhood ?? '',
+    city: studentRow.city ?? '',
+    state: studentRow.state ?? '',
+    address: studentRow.address ?? '',
+  }
+
+  const signingUrl = contract.signingToken
+    ? signingUrlForToken(contract.signingToken)
+    : undefined
+
+  const transport = resolveEmailTransport()
+  const subject = `Contrato ${contract.number} — ${studio?.name ?? 'HealthCore'}`
+  const html = buildContractEmailHtml({
+    contract,
+    student,
+    studio,
+    planPrice,
+    planPeriod: (plan?.period as PlanPeriod | undefined) ?? null,
+    signingUrl,
+  })
+  const text = buildContractEmailText({
+    contract,
+    student,
+    studio,
+    planPrice,
+    planPeriod: (plan?.period as PlanPeriod | undefined) ?? null,
+    signingUrl,
+  })
+
+  await createEmailSender().send({
+    to: studentRow.email,
     subject,
     text,
-    html: `<pre style="font-family:system-ui,sans-serif;white-space:pre-wrap">${text}</pre>`,
+    html,
   })
 
-  await updateContractRecord(id, {
-    historyAction: `Contrato enviado por e-mail para ${student.email}`,
+  const updated = await updateContractRecord(id, {
+    historyAction:
+      transport === 'console'
+        ? `Contrato preparado para e-mail (simulado no servidor) · ${studentRow.email}`
+        : `Contrato enviado por e-mail para ${studentRow.email}`,
   })
 
-  return { contract, emailedTo: student.email }
+  return {
+    contract: updated ?? contract,
+    emailedTo: studentRow.email,
+    transport,
+  }
 }
 
 export async function deleteContractRecord(id: string) {

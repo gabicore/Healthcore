@@ -392,14 +392,18 @@ model Student {
 }
 
 model ScheduleSlot {
-  id        String  @id @default(cuid())
-  studentId String
-  weekday   Weekday
-  time      String  @db.VarChar(5)
+  id            String    @id @default(cuid())
+  studentId     String
+  weekday       Weekday
+  time          String    @db.VarChar(5)
+  /** Início da vigência deste horário na grade do aluno. */
+  effectiveFrom DateTime  @db.Date
+  /** Fim da vigência (inclusive). Null = grade atual. */
+  effectiveTo   DateTime? @db.Date
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  @@unique([studentId, weekday, time])
+  @@unique([studentId, weekday, time, effectiveFrom])
   @@index([studentId])
 }
 
@@ -497,19 +501,42 @@ model Contract {
   clauses               Json
   signedAt              DateTime?      @db.Date
   signatureName         String?
+  signingToken          String?        @unique
+  validationCode        String?        @unique
   version               Int            @default(1)
   previousVersions      Json
   history               Json
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
-  studio  Studio  @relation(fields: [studioId], references: [id], onDelete: Cascade)
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  plan    Plan    @relation(fields: [planId], references: [id])
+  studio    Studio             @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  student   Student            @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  plan      Plan               @relation(fields: [planId], references: [id])
+  signature ContractSignature?
 
   @@unique([studioId, number])
   @@index([studentId])
   @@index([studioId])
+}
+
+model ContractSignature {
+  id                String   @id @default(cuid())
+  contractId        String   @unique
+  signerName        String
+  signatureImage    String   @db.LongText
+  signedAt          DateTime
+  ipAddress         String   @default("")
+  userAgent         String   @default("") @db.Text
+  tokenUsed         String
+  contractVersion   Int
+  documentHash      String
+  documentSnapshot  Json
+  validationCode    String   @unique
+  createdAt         DateTime @default(now())
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([validationCode])
 }
 
 model Expense {

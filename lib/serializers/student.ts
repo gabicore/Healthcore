@@ -39,6 +39,8 @@ export function serializeSchedule(slots: DbSchedule[] = []): ScheduleSlot[] {
   return slots.map((slot) => ({
     weekday: fromDbWeekday(slot.weekday),
     time: slot.time,
+    effectiveFrom: toIsoDateOnly(slot.effectiveFrom),
+    effectiveTo: slot.effectiveTo ? toIsoDateOnly(slot.effectiveTo) : null,
   }))
 }
 

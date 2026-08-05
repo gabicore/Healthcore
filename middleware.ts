@@ -10,6 +10,10 @@ const PUBLIC_PATHS = [
   '/reset-password',
   '/api/auth',
   '/api/health',
+  '/assinar-contrato',
+  '/validar-contrato',
+  '/api/assinatura-contratos',
+  '/api/validacao-contratos',
 ]
 
 function isPublic(pathname: string) {

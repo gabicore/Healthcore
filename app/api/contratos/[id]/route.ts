@@ -36,9 +36,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       typeof body?.action === 'string' ? (body.action as string) : null
 
     if (action === 'send') {
-      const updated = await sendContractForSignatureRecord(id)
-      if (!updated) return jsonError('Contrato não encontrado', 404)
-      return jsonOk(updated)
+      try {
+        const updated = await sendContractForSignatureRecord(id)
+        if (!updated) return jsonError('Contrato não encontrado', 404)
+        return jsonOk(updated)
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('já assinado')) {
+          return jsonError(error.message, 400)
+        }
+        throw error
+      }
     }
     if (action === 'sign') {
       const updated = await signContractRecord(
@@ -84,9 +91,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     } catch (error) {
       if (
         error instanceof Error &&
-        error.message === 'Plano não encontrado'
+        (error.message === 'Plano não encontrado' ||
+          error.message.includes('não pode ser alterado'))
       ) {
-        return jsonError(error.message, 404)
+        return jsonError(
+          error.message,
+          error.message === 'Plano não encontrado' ? 404 : 400,
+        )
       }
       throw error
     }

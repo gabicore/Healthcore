@@ -19,6 +19,13 @@ export const weekdaySchema = z.enum([
 export const scheduleSlotSchema = z.object({
   weekday: weekdaySchema,
   time: z.string().regex(/^\d{2}:\d{2}$/),
+  effectiveFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  effectiveTo: z
+    .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()])
+    .optional(),
 })
 
 export const createStudentSchema = z.object({
@@ -99,6 +106,21 @@ export const updateStudentSchema = z.object({
   dueDay: z.number().int().min(1).max(28).optional(),
   paymentMethod: paymentMethodSchema.optional(),
   schedule: z.array(scheduleSlotSchema).optional(),
+  /** Data a partir da qual a nova grade passa a valer (YYYY-MM-DD). */
+  scheduleEffectiveFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  /** Remove um período do histórico de horários (from + to). */
+  deleteSchedulePeriod: z
+    .object({
+      effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      effectiveTo: z
+        .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()])
+        .optional()
+        .default(null),
+    })
+    .optional(),
 })
 
 export type CreateStudentInput = z.input<typeof createStudentSchema>

@@ -49,6 +49,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       ) {
         return jsonError(error.message, 400)
       }
+      if (
+        error instanceof Error &&
+        error.message.includes('Período de agenda')
+      ) {
+        return jsonError(error.message, 404)
+      }
       throw error
     }
   } catch (error) {

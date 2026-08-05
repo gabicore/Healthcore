@@ -3,7 +3,7 @@ import { prismaAdapter } from 'better-auth/adapters/prisma'
 import { APIError, createAuthMiddleware } from 'better-auth/api'
 import { nextCookies } from 'better-auth/next-js'
 
-import { emailSender } from '@/lib/auth/email/console-sender'
+import { emailSender } from '@/lib/auth/email'
 import { hashPassword, verifyPassword } from '@/lib/auth/password'
 import {
   authAuditRepository,

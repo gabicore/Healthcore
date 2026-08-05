@@ -1,16 +1,14 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Check, Pencil, RefreshCw, UserX, X, CalendarPlus } from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Check, RefreshCw, UserX, X, CalendarPlus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { AttendanceBadge } from '@/components/status-badges'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -44,22 +42,24 @@ import {
 import {
   afternoonSlots,
   availableSlotsForWeekday,
+  currentScheduleSlots,
   formatShortDate,
   getAttendanceStats,
   getMakeupAllowance,
   getStudentAttendanceHistory,
+  getTimeSlots,
   getWeekdayFromDate,
   morningSlots,
   parseIsoDate,
+  contractTotalClasses,
   professionals,
   replaceStudioHours,
+  scheduleSlotsOnDate,
   setAttendanceStatus,
-  getTimeSlots,
   toIsoDate,
   upsertAttendanceSession,
   type AttendanceStatus,
   type ClassSession,
-  type ClassSessionType,
   type Plan,
   type ScheduleSlot,
 } from '@/lib/data'
@@ -82,13 +82,6 @@ const statusActions: {
   { status: 'cancelada', label: 'Cancelar', icon: X },
   { status: 'agendada', label: 'Agendada', icon: CalendarPlus },
 ]
-
-const typeLabel: Record<ClassSessionType, string> = {
-  fixa: 'Fixa',
-  avulsa: 'Avulsa',
-  reposicao: 'Reposição',
-  experimental: 'Experimental',
-}
 
 type StudentAttendancePanelProps = {
   studentId: string
@@ -118,6 +111,8 @@ export function StudentAttendancePanel({
   const [displayTick, setDisplayTick] = useState(0)
   const [contractPlan, setContractPlan] = useState<Plan | null>(null)
   const [editingSession, setEditingSession] = useState<ClassSession | null>(null)
+  const [makeupOpen, setMakeupOpen] = useState(false)
+  const [makeupSource, setMakeupSource] = useState<ClassSession | null>(null)
   const [rangeFrom, setRangeFrom] = useState(historyFrom)
   const [rangeTo, setRangeTo] = useState<string | null>(historyTo)
   const [persistedSessions, setPersistedSessions] = useState<ClassSession[]>(
@@ -193,14 +188,18 @@ export function StudentAttendancePanel({
   }, [rangeFrom, rangeTo, historyFrom, historyTo])
 
   const weeklyLimit = contractPlan?.frequency ?? null
+  const activeSchedule = useMemo(
+    () => currentScheduleSlots(schedule),
+    [schedule],
+  )
+  /** Frequência só libera com a grade atual completa (dias do plano). */
   const scheduleComplete =
-    weeklyLimit != null && schedule.length >= weeklyLimit
-  const scheduleRemaining =
-    weeklyLimit != null ? Math.max(0, weeklyLimit - schedule.length) : 0
+    weeklyLimit != null
+      ? activeSchedule.length >= weeklyLimit
+      : activeSchedule.length > 0
 
   const sessions = useMemo(() => {
     void displayTick
-    // Só gera histórico quando todos os horários da agenda fixa estão definidos.
     if (!scheduleComplete) return []
     return getStudentAttendanceHistory(studentId, {
       schedule,
@@ -228,8 +227,22 @@ export function StudentAttendancePanel({
     [sessions],
   )
 
-  /** Sempre igual às aulas fixas listadas no histórico (mesma geração). */
-  const totalContractClasses = fixedSessions.length
+  /** Mesmo total da vigência no financeiro: início → fim × frequência. */
+  const totalContractClasses = useMemo(() => {
+    if (!contractPlan || !historyBounds.from || !historyBounds.contractEnd) {
+      return fixedSessions.length
+    }
+    return contractTotalClasses({
+      startDate: historyBounds.from,
+      endDate: historyBounds.contractEnd,
+      frequency: contractPlan.frequency,
+    })
+  }, [
+    contractPlan,
+    historyBounds.from,
+    historyBounds.contractEnd,
+    fixedSessions.length,
+  ])
 
   const makeupAllowance = useMemo(
     () =>
@@ -239,6 +252,53 @@ export function StudentAttendancePanel({
       }),
     [sessions, historyBounds],
   )
+
+  /** Aulas fixas com falta/cancelamento ainda sem reposição + reposições falhas. */
+  const toRemakeSessions = useMemo(() => {
+    const byId = new Map<string, ClassSession>()
+    for (const session of [
+      ...makeupAllowance.pendingMissed,
+      ...makeupAllowance.failedMakeups,
+    ]) {
+      byId.set(session.id, session)
+    }
+    return [...byId.values()].sort((a, b) =>
+      `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`),
+    )
+  }, [makeupAllowance.pendingMissed, makeupAllowance.failedMakeups])
+
+  /** Reposições já marcadas/reagendadas (permanecem na grade com status atual). */
+  const remadeSessions = useMemo(
+    () =>
+      sessions
+        .filter(
+          (s) =>
+            s.type === 'reposicao' &&
+            (s.status === 'agendada' || s.status === 'presente'),
+        )
+        .sort((a, b) =>
+          `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`),
+        ),
+    [sessions],
+  )
+
+  function openMakeupDialog(session?: ClassSession) {
+    if (session?.type === 'reposicao') {
+      setEditingSession(session)
+      return
+    }
+    if (makeupAllowance.remaining <= 0) {
+      toast.error('Nada a remarcar', {
+        description:
+          makeupAllowance.missed === 0
+            ? 'Marque falta ou cancelamento em uma aula fixa para liberar reposição.'
+            : 'Todas as faltas/cancelamentos deste contrato já foram remarcados. Reposições com falta podem ser editadas na lista.',
+      })
+      return
+    }
+    setMakeupSource(session ?? makeupAllowance.pendingMissed[0] ?? null)
+    setMakeupOpen(true)
+  }
 
   function refresh() {
     setVersion((v) => v + 1)
@@ -349,34 +409,14 @@ export function StudentAttendancePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold">Frequência e presença</h3>
-          <p className="text-sm text-muted-foreground">
-            {!scheduleComplete
-              ? weeklyLimit != null
-                ? `Complete a agenda fixa (${schedule.length}/${weeklyLimit} horário${weeklyLimit === 1 ? '' : 's'}) para liberar o histórico.`
-                : 'Defina o plano do contrato e a agenda fixa para liberar o histórico.'
-              : (
-                <>
-                  Vigência {formatShortDate(historyBounds.from)}
-                  {historyBounds.contractEnd
-                    ? ` — ${formatShortDate(historyBounds.contractEnd)}`
-                    : ''}
-                  {' · '}
-                  {totalContractClasses} aulas fixas
-                  {makeupAllowance.remaining > 0
-                    ? ` · ${makeupAllowance.remaining} a remarcar`
-                    : ''}
-                  {contractPlan ? ` · ${contractPlan.frequencyLabel}` : null}
-                </>
-              )}
-          </p>
-        </div>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Frequência e presença</CardTitle>
+        </CardHeader>
+      </Card>
 
       {scheduleComplete ? (
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard
           label="Aulas fixas"
           value={String(totalContractClasses)}
@@ -388,160 +428,96 @@ export function StudentAttendancePanel({
         />
         <StatCard label="Presenças" value={String(stats.presentes)} />
         <StatCard
-          label="Faltas / canceladas"
-          value={String(makeupAllowance.missed)}
-          accent={makeupAllowance.missed > 0}
+          label="Faltas"
+          value={String(
+            sessions.filter((s) => s.status === 'falta').length,
+          )}
+          accent={sessions.some((s) => s.status === 'falta')}
           hint="Geram direito a reposição"
         />
         <StatCard
-          label="A remarcar"
-          value={String(makeupAllowance.remaining)}
-          accent={makeupAllowance.remaining > 0}
-          hint={
-            makeupAllowance.remaining > 0
-              ? 'Reposições ainda pendentes'
-              : 'Nada pendente'
-          }
+          label="Canceladas"
+          value={String(
+            sessions.filter((s) => s.status === 'cancelada').length,
+          )}
+          accent={sessions.some((s) => s.status === 'cancelada')}
+          hint="Geram direito a reposição"
         />
         <StatCard
           label="Já remarcadas"
-          value={String(makeupAllowance.used)}
-          hint={`${makeupAllowance.used}/${makeupAllowance.missed || 0} cobertas`}
+          value={`${makeupAllowance.used}/${makeupAllowance.missed}`}
+          hint={
+            makeupAllowance.remaining > 0
+              ? `${makeupAllowance.remaining} a remarcar`
+              : 'Nada a remarcar'
+          }
         />
       </div>
       ) : null}
 
-      <Card className="overflow-hidden py-0">
-        <CardHeader className="border-b py-4">
-          <CardTitle className="text-base">Histórico de aulas</CardTitle>
-          <CardDescription>
-            {!scheduleComplete
-              ? weeklyLimit != null
-                ? `Faltam ${scheduleRemaining} horário${scheduleRemaining === 1 ? '' : 's'} na agenda fixa (${schedule.length}/${weeklyLimit}).`
-                : 'O histórico só é liberado com a agenda fixa completa.'
-              : 'Marque presença, falta ou cancelamento nas aulas fixas. Reposição só nasce de falta/cancelamento.'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {!scheduleComplete ? (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-              {weeklyLimit != null
-                ? `Selecione todos os ${weeklyLimit} horário(s) da agenda fixa (${schedule.length}/${weeklyLimit}) para gerar o histórico de aulas.`
-                : 'Complete a agenda fixa do plano para gerar o histórico de aulas.'}
-            </p>
-          ) : sessions.length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-              Nenhuma aula no período.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Data</TableHead>
-                  <TableHead>Horário</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sessions.map((session) => {
-                  const needsMakeup = makeupAllowance.pendingMissed.some(
-                    (s) => s.id === session.id,
-                  )
-                  const wasCovered = makeupAllowance.coveredMissed.some(
-                    (s) => s.id === session.id,
-                  )
-                  return (
-                  <TableRow
-                    key={session.id}
-                    className={
-                      needsMakeup
-                        ? 'bg-destructive/5'
-                        : session.type === 'reposicao'
-                          ? 'bg-muted/40'
-                          : undefined
-                    }
-                  >
-                    <TableCell className="whitespace-nowrap text-sm">
-                      <span className="font-medium">
-                        {formatShortDate(session.date)}
-                      </span>
-                      <span className="ml-1.5 text-xs text-muted-foreground">
-                        {session.weekday}
-                      </span>
-                      {needsMakeup ? (
-                        <span className="mt-0.5 block text-[11px] font-medium text-destructive">
-                          A remarcar
-                        </span>
-                      ) : null}
-                      {wasCovered ? (
-                        <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                          Já coberta por reposição
-                        </span>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="tabular-nums text-sm">
-                      {session.time}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="font-normal">
-                        {typeLabel[session.type]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <AttendanceBadge status={session.status} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex flex-wrap justify-end gap-1">
-                        {statusActions.map(({ status, label, icon: Icon }) => (
-                          <Button
-                            key={status}
-                            type="button"
-                            size="xs"
-                            variant={
-                              session.status === status ? 'secondary' : 'ghost'
-                            }
-                            disabled={session.status === status}
-                            title={label}
-                            onClick={() => handleStatus(session, status)}
-                          >
-                            <Icon data-icon="inline-start" />
-                            {label}
-                          </Button>
-                        ))}
-                        {session.type === 'reposicao' ? (
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onClick={() => setEditingSession(session)}
-                          >
-                            <Pencil data-icon="inline-start" />
-                            Editar
-                          </Button>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {scheduleComplete ? (
-        <MakeupSummaryCard
-          studentId={studentId}
-          schedule={schedule}
-          allowance={makeupAllowance}
-          contractFrom={historyBounds.from}
-          contractTo={historyBounds.contractEnd ?? historyBounds.to}
-          onCreated={refresh}
+      <AttendanceListCard
+        title="Aulas fixas"
+        incompleteMessage={
+          weeklyLimit != null
+            ? `Preencha a agenda fixa com ${weeklyLimit} dia(s) por semana (${activeSchedule.length}/${weeklyLimit}) para liberar o histórico.`
+            : 'Inclua a agenda fixa para liberar o histórico de aulas.'
+        }
+        emptyMessage="Nenhuma aula fixa no período."
+        scheduleComplete={scheduleComplete}
+        hasSessions={fixedSessions.length > 0}
+      >
+        <SessionHistoryTable
+          sessions={fixedSessions}
+          makeupAllowance={makeupAllowance}
+          onStatus={handleStatus}
+          actionMode="status"
         />
-      ) : null}
+      </AttendanceListCard>
+
+      <AttendanceListCard
+        title="Reposições"
+        incompleteMessage="Complete a agenda fixa para liberar as reposições."
+        emptyMessage="Nenhuma aula a remarcar."
+        scheduleComplete={scheduleComplete}
+        hasSessions={toRemakeSessions.length > 0}
+      >
+        <SessionHistoryTable
+          sessions={toRemakeSessions}
+          makeupAllowance={makeupAllowance}
+          onRemake={openMakeupDialog}
+          actionMode="remake"
+        />
+      </AttendanceListCard>
+
+      <AttendanceListCard
+        title="Aulas remarcadas"
+        incompleteMessage="Complete a agenda fixa para liberar as aulas remarcadas."
+        emptyMessage="Nenhuma aula remarcada no período."
+        scheduleComplete={scheduleComplete}
+        hasSessions={remadeSessions.length > 0}
+      >
+        <SessionHistoryTable
+          sessions={remadeSessions}
+          makeupAllowance={makeupAllowance}
+          onStatus={handleStatus}
+          actionMode="status"
+        />
+      </AttendanceListCard>
+
+      <MakeupDialog
+        studentId={studentId}
+        schedule={schedule}
+        remaining={makeupAllowance.remaining}
+        contractFrom={historyBounds.from}
+        contractTo={historyBounds.contractEnd ?? historyBounds.to}
+        source={makeupSource}
+        open={makeupOpen}
+        onOpenChange={(next) => {
+          setMakeupOpen(next)
+          if (!next) setMakeupSource(null)
+        }}
+        onCreated={refresh}
+      />
 
       <EditMakeupDialog
         studentId={studentId}
@@ -561,6 +537,150 @@ export function StudentAttendancePanel({
   )
 }
 
+function AttendanceListCard({
+  title,
+  action,
+  incompleteMessage,
+  emptyMessage,
+  scheduleComplete,
+  hasSessions,
+  children,
+}: {
+  title: string
+  action?: ReactNode
+  incompleteMessage: string
+  emptyMessage: string
+  scheduleComplete: boolean
+  hasSessions: boolean
+  children: ReactNode
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+        <CardTitle>{title}</CardTitle>
+        {action ?? null}
+      </CardHeader>
+      <CardContent className="px-0 pb-0">
+        {!scheduleComplete ? (
+          <p className="px-4 pb-6 text-center text-sm text-muted-foreground">
+            {incompleteMessage}
+          </p>
+        ) : !hasSessions ? (
+          <p className="px-4 pb-6 text-center text-sm text-muted-foreground">
+            {emptyMessage}
+          </p>
+        ) : (
+          children
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function SessionHistoryTable({
+  sessions,
+  makeupAllowance,
+  onStatus,
+  onRemake,
+  actionMode = 'status',
+}: {
+  sessions: ClassSession[]
+  makeupAllowance: ReturnType<typeof getMakeupAllowance>
+  onStatus?: (session: ClassSession, status: AttendanceStatus) => void
+  onRemake?: (session: ClassSession) => void
+  actionMode?: 'status' | 'remake'
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="pl-4">Data</TableHead>
+          <TableHead>Dia</TableHead>
+          <TableHead>Horário</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead className="pr-4 text-right">Ações</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {sessions.map((session) => {
+          const needsMakeup = makeupAllowance.pendingMissed.some(
+            (s) => s.id === session.id,
+          )
+          const failedMakeup = makeupAllowance.failedMakeups.some(
+            (s) => s.id === session.id,
+          )
+          return (
+            <TableRow
+              key={session.id}
+              className={
+                actionMode === 'remake' ? 'bg-destructive/5' : undefined
+              }
+            >
+              <TableCell className="whitespace-nowrap pl-4 text-sm">
+                <span className="font-medium">
+                  {formatShortDate(session.date)}
+                </span>
+                {actionMode === 'remake' && needsMakeup ? (
+                  <span className="mt-0.5 block text-[11px] font-medium text-destructive">
+                    A remarcar
+                  </span>
+                ) : null}
+                {actionMode === 'remake' && failedMakeup ? (
+                  <span className="mt-0.5 block text-[11px] font-medium text-destructive">
+                    Reposição a reagendar
+                  </span>
+                ) : null}
+              </TableCell>
+              <TableCell className="whitespace-nowrap text-sm">
+                {session.weekday}
+              </TableCell>
+              <TableCell className="tabular-nums text-sm">
+                {session.time}
+              </TableCell>
+              <TableCell>
+                <AttendanceBadge status={session.status} />
+              </TableCell>
+              <TableCell className="pr-4 text-right">
+                <div className="flex flex-wrap justify-end gap-1">
+                  {actionMode === 'status' && onStatus
+                    ? statusActions.map(({ status, label, icon: Icon }) => (
+                        <Button
+                          key={status}
+                          type="button"
+                          size="xs"
+                          variant={
+                            session.status === status ? 'secondary' : 'ghost'
+                          }
+                          disabled={session.status === status}
+                          title={label}
+                          onClick={() => onStatus(session, status)}
+                        >
+                          <Icon data-icon="inline-start" />
+                          {label}
+                        </Button>
+                      ))
+                    : null}
+                  {actionMode === 'remake' && onRemake ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => onRemake(session)}
+                    >
+                      <RefreshCw data-icon="inline-start" />
+                      {failedMakeup ? 'Reagendar' : 'Remarcar'}
+                    </Button>
+                  ) : null}
+                </div>
+              </TableCell>
+            </TableRow>
+          )
+        })}
+      </TableBody>
+    </Table>
+  )
+}
+
 function StatCard({
   label,
   value,
@@ -575,10 +695,10 @@ function StatCard({
   highlight?: boolean
 }) {
   return (
-    <Card className="gap-1 py-3">
-      <CardContent className="px-4 py-0">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p
+    <Card>
+      <CardContent className="flex flex-col gap-1 pt-6">
+        <span className="text-sm text-muted-foreground">{label}</span>
+        <span
           className={`text-2xl font-semibold tabular-nums ${
             highlight
               ? 'text-chart-2'
@@ -588,162 +708,12 @@ function StatCard({
           }`}
         >
           {value}
-        </p>
+        </span>
         {hint ? (
-          <p className="truncate text-[11px] text-muted-foreground">{hint}</p>
+          <span className="truncate text-xs text-muted-foreground">{hint}</span>
         ) : null}
       </CardContent>
     </Card>
-  )
-}
-
-function MakeupSummaryCard({
-  studentId,
-  schedule,
-  allowance,
-  contractFrom,
-  contractTo,
-  onCreated,
-}: {
-  studentId: string
-  schedule: ScheduleSlot[]
-  allowance: ReturnType<typeof getMakeupAllowance>
-  contractFrom: string
-  contractTo: string
-  onCreated: () => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [source, setSource] = useState<ClassSession | null>(null)
-
-  function openFor(session?: ClassSession) {
-    if (allowance.remaining <= 0) {
-      toast.error('Nada a remarcar', {
-        description:
-          allowance.missed === 0
-            ? 'Marque falta ou cancelamento em uma aula fixa para liberar reposição.'
-            : 'Todas as faltas/cancelamentos deste contrato já foram remarcados.',
-      })
-      return
-    }
-    setSource(session ?? allowance.pendingMissed[0] ?? null)
-    setOpen(true)
-  }
-
-  return (
-    <>
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle className="text-base">Reposições</CardTitle>
-              <CardDescription>
-                Só para aulas fixas com falta ou cancelamento. Saldo:{' '}
-                <span className="font-medium text-foreground">
-                  {allowance.remaining} a remarcar
-                </span>
-                {' · '}
-                {allowance.used} já remarcada
-                {allowance.used === 1 ? '' : 's'}
-                {' · '}
-                {allowance.missed} falta
-                {allowance.missed === 1 ? '' : 's'}/cancelamento
-                {allowance.missed === 1 ? '' : 's'}
-              </CardDescription>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              disabled={allowance.remaining <= 0}
-              onClick={() => openFor()}
-            >
-              <RefreshCw data-icon="inline-start" />
-              Remarcar aula
-              {allowance.remaining > 0 ? ` (${allowance.remaining})` : ''}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {allowance.pendingMissed.length === 0 ? (
-            <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-              {allowance.missed === 0
-                ? 'Nenhuma aula fixa com falta ou cancelamento. Quando houver, o botão Remarcar libera automaticamente.'
-                : 'Todas as faltas/cancelamentos já têm reposição marcada.'}
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {allowance.pendingMissed.map((session) => (
-                <li
-                  key={session.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">
-                      {formatShortDate(session.date)} · {session.time} ·{' '}
-                      {session.weekday}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Aula fixa com{' '}
-                      {session.status === 'falta' ? 'falta' : 'cancelamento'} —
-                      precisa de reposição
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openFor(session)}
-                  >
-                    <RefreshCw data-icon="inline-start" />
-                    Remarcar esta
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {allowance.makeups.length > 0 ? (
-            <div className="border-t pt-3">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">
-                Reposições já marcadas
-              </p>
-              <ul className="flex flex-col gap-1.5">
-                {allowance.makeups.map((session) => (
-                  <li
-                    key={session.id}
-                    className="flex flex-wrap items-center justify-between gap-2 text-sm"
-                  >
-                    <span>
-                      {formatShortDate(session.date)} · {session.time}
-                      {session.notes ? (
-                        <span className="text-muted-foreground">
-                          {' '}
-                          — {session.notes}
-                        </span>
-                      ) : null}
-                    </span>
-                    <AttendanceBadge status={session.status} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <MakeupDialog
-        studentId={studentId}
-        schedule={schedule}
-        remaining={allowance.remaining}
-        contractFrom={contractFrom}
-        contractTo={contractTo}
-        source={source}
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next)
-          if (!next) setSource(null)
-        }}
-        onCreated={onCreated}
-      />
-    </>
   )
 }
 
@@ -801,11 +771,13 @@ function MakeupDialog({
 
   const weekday = getWeekdayFromDate(parseIsoDate(date))
   const fixedTimesForDay = useMemo(() => {
-    if (!weekday) return new Set<string>()
+    if (!weekday || !date) return new Set<string>()
     return new Set(
-      schedule.filter((s) => s.weekday === weekday).map((s) => s.time),
+      scheduleSlotsOnDate(schedule, date)
+        .filter((s) => s.weekday === weekday)
+        .map((s) => s.time),
     )
-  }, [schedule, weekday])
+  }, [schedule, weekday, date])
 
   const slotOptions = useMemo(() => {
     void hoursTick
@@ -865,6 +837,13 @@ function MakeupDialog({
         })
         try {
           upsertAttendanceSession(saved)
+          // Garante que falta/cancelamento da aula de origem permanece no dia.
+          if (
+            source &&
+            (source.status === 'falta' || source.status === 'cancelada')
+          ) {
+            upsertAttendanceSession(source)
+          }
         } catch {
           /* ledger local */
         }
@@ -896,7 +875,8 @@ function MakeupDialog({
               <>
                 Cobrindo a aula fixa de {formatShortDate(source.date)} às{' '}
                 {source.time} ({source.status === 'falta' ? 'falta' : 'cancelamento'}
-                ). Escolha um horário diferente da grade fixa.
+                ). Escolha outro dia ou um horário que não coincida com a aula
+                fixa desse dia.
               </>
             ) : (
               <>
@@ -924,8 +904,8 @@ function MakeupDialog({
             <FieldLabel>Novo horário</FieldLabel>
             {slotOptions.length === 0 ? (
               <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-                Nenhum horário livre neste dia — a agenda fixa ocupa os slots ou
-                o estúdio está fechado. Escolha outro dia.
+                Nenhum horário livre neste dia — a aula fixa ocupa o único
+                slot disponível ou o estúdio está fechado. Escolha outro dia.
               </p>
             ) : (
               <Select value={time} onValueChange={(v) => setTime(v ?? '08:00')}>
@@ -1028,11 +1008,13 @@ function EditMakeupDialog({
 
   const weekday = date ? getWeekdayFromDate(parseIsoDate(date)) : null
   const fixedTimesForDay = useMemo(() => {
-    if (!weekday) return new Set<string>()
+    if (!weekday || !date) return new Set<string>()
     return new Set(
-      schedule.filter((s) => s.weekday === weekday).map((s) => s.time),
+      scheduleSlotsOnDate(schedule, date)
+        .filter((s) => s.weekday === weekday)
+        .map((s) => s.time),
     )
-  }, [schedule, weekday])
+  }, [schedule, weekday, date])
 
   const slotOptions = useMemo(() => {
     void hoursTick
@@ -1066,7 +1048,7 @@ function EditMakeupDialog({
     if (!slotOptions.includes(time)) {
       toast.error('Horário inválido', {
         description:
-          'Escolha um horário fora da grade fixa do aluno e dentro do funcionamento do estúdio.',
+          'Escolha um horário que não coincida com a aula fixa desse dia e que esteja dentro do funcionamento do estúdio.',
       })
       return
     }
@@ -1075,6 +1057,9 @@ function EditMakeupDialog({
       date,
       time,
       notes: notes.trim() || null,
+      ...(session.status === 'falta' || session.status === 'cancelada'
+        ? { status: 'agendada' as const }
+        : {}),
     })
       .then((updated) => {
         try {
@@ -1082,9 +1067,14 @@ function EditMakeupDialog({
         } catch {
           /* ledger local */
         }
-        toast.success('Reposição atualizada', {
-          description: `${formatShortDate(updated.date)} · ${updated.time}`,
-        })
+        toast.success(
+          session.status === 'falta' || session.status === 'cancelada'
+            ? 'Reposição reagendada'
+            : 'Reposição atualizada',
+          {
+            description: `${formatShortDate(updated.date)} · ${updated.time}`,
+          },
+        )
         onSaved()
       })
       .catch((error) => {
@@ -1100,10 +1090,15 @@ function EditMakeupDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Editar reposição</DialogTitle>
+          <DialogTitle>
+            {session?.status === 'falta' || session?.status === 'cancelada'
+              ? 'Reagendar reposição'
+              : 'Editar reposição'}
+          </DialogTitle>
           <DialogDescription>
-            Corrija a data ou o horário da reposição. Ela continua vinculada ao
-            contrato atual e não pode ocupar um slot da agenda fixa.
+            {session?.status === 'falta' || session?.status === 'cancelada'
+              ? 'Escolha nova data e horário. A reposição permanece na grade com status agendada.'
+              : 'Corrija a data ou o horário da reposição. Ela continua vinculada ao contrato atual e não pode coincidir com o dia e horário de uma aula fixa.'}
           </DialogDescription>
         </DialogHeader>
         <FieldGroup>

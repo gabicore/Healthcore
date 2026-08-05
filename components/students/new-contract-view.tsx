@@ -6,9 +6,10 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { PageHeader } from '@/components/page-header'
+import { PlanFrequencyPeriodFields } from '@/components/students/plan-frequency-period-fields'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -23,9 +24,10 @@ import {
   contractEndDateForPeriod,
   contractTotalClasses,
   formatCurrency,
+  formatPlanModalityLabel,
   formatShortDate,
+  isMinor,
   paymentMethods,
-  planPeriodLabel,
   planPeriodMonths,
   studentChargedValue,
   toIsoDate,
@@ -64,6 +66,7 @@ export function NewContractView({
     student.name,
   )
   const [planError, setPlanError] = useState<string | null>(null)
+  const studentIsMinor = isMinor(student.birthDate)
 
   const selectedPlan = useMemo(
     () => plans.find((p) => p.id === planId),
@@ -80,11 +83,9 @@ export function NewContractView({
             startDate,
             endDate,
             frequency: selectedPlan.frequency,
-            schedule: student.schedule,
-            planId: selectedPlan.id,
           })
         : 0,
-    [selectedPlan, startDate, endDate, student.schedule],
+    [selectedPlan, startDate, endDate],
   )
 
   useEffect(() => {
@@ -141,22 +142,22 @@ export function NewContractView({
     setCreating(true)
     try {
       const plan = plans.find((p) => p.id === planId)
-      await createContract(student.id, {
+      const created = await createContract(student.id, {
         planId,
-        planLabel: plan
-          ? `${planPeriodLabel[plan.period]} · ${plan.frequencyLabel}`
-          : undefined,
+        planLabel: plan ? formatPlanModalityLabel(plan) : undefined,
         startDate,
         endDate,
         monthlyValue,
         discountPercent: Math.min(100, Math.max(0, discount)),
         dueDay: Math.min(28, Math.max(1, dueDay)),
         paymentMethod,
-        financialResponsible: financialResponsible.trim() || student.name,
+        financialResponsible: studentIsMinor
+          ? financialResponsible.trim() || student.name
+          : student.name,
         status: 'rascunho',
       })
       toast.success('Contrato criado')
-      router.push(backHref)
+      router.push(`/alunos/${student.id}/contratos/${created.id}`)
       router.refresh()
     } catch (err: unknown) {
       toast.error(
@@ -221,43 +222,16 @@ export function NewContractView({
             </CardHeader>
             <CardContent>
               <FieldGroup className="gap-4">
-                <Field data-invalid={!!planError || undefined}>
-                  <FieldLabel>Plano</FieldLabel>
-                  <Select
-                    value={planId || null}
-                    onValueChange={(v) => {
-                      if (v) {
-                        setPlanId(v)
-                        setPlanError(null)
-                      }
-                    }}
-                    disabled={loadingPlans || hasActiveContract}
-                  >
-                    <SelectTrigger
-                      className="w-full"
-                      aria-invalid={!!planError || undefined}
-                    >
-                      <SelectValue
-                        placeholder={
-                          loadingPlans
-                            ? 'Carregando planos…'
-                            : 'Selecione um plano'
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {plans.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {planPeriodLabel[p.period]} · {p.frequencyLabel} —{' '}
-                            {formatCurrency(p.price)}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <FieldError>{planError}</FieldError>
-                </Field>
+                <PlanFrequencyPeriodFields
+                  plans={plans}
+                  planId={planId}
+                  disabled={loadingPlans || hasActiveContract}
+                  error={planError}
+                  onChange={(plan) => {
+                    setPlanId(plan.id)
+                    setPlanError(null)
+                  }}
+                />
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <Field>
@@ -355,20 +329,22 @@ export function NewContractView({
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field className="sm:col-span-2 lg:col-span-3">
-                    <FieldLabel htmlFor="contract-responsible">
-                      Responsável financeiro
-                    </FieldLabel>
-                    <Input
-                      id="contract-responsible"
-                      value={financialResponsible}
-                      onChange={(e) =>
-                        setFinancialResponsible(e.target.value)
-                      }
-                      placeholder={student.name}
-                      disabled={hasActiveContract}
-                    />
-                  </Field>
+                  {studentIsMinor ? (
+                    <Field className="sm:col-span-2 lg:col-span-3">
+                      <FieldLabel htmlFor="contract-responsible">
+                        Responsável financeiro
+                      </FieldLabel>
+                      <Input
+                        id="contract-responsible"
+                        value={financialResponsible}
+                        onChange={(e) =>
+                          setFinancialResponsible(e.target.value)
+                        }
+                        placeholder="Nome do responsável"
+                        disabled={hasActiveContract}
+                      />
+                    </Field>
+                  ) : null}
                 </div>
 
                 {selectedPlan ? (

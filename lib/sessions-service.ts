@@ -198,7 +198,9 @@ export async function getMakeupAllowanceForStudent(studentId: string) {
       (r.status === 'falta' || r.status === 'cancelada'),
   ).length
   const used = rows.filter(
-    (r) => r.type === 'reposicao' && r.status !== 'cancelada',
+    (r) =>
+      r.type === 'reposicao' &&
+      (r.status === 'agendada' || r.status === 'presente'),
   ).length
   return {
     missed,
@@ -219,8 +221,8 @@ async function assertMakeupAllowed(studentId: string) {
   if (remaining <= 0) {
     throw new Error(
       missed === 0
-        ? 'Reposição só é permitida quando uma aula fixa tem falta ou foi cancelada'
-        : `Limite de reposições do contrato atingido (${used}/${missed}). Só é possível repor aulas fixas com falta ou cancelamento.`,
+        ? 'Reposição só é permitida quando uma aula fixa (ou reposição) tem falta ou foi cancelada'
+        : `Limite de reposições do contrato atingido (${used}/${missed}). Reposições com falta/cancelamento podem ser reagendadas.`,
     )
   }
 }
@@ -244,7 +246,11 @@ async function assertMakeupPlacement(input: {
   }
 
   const fixedSlots = await prisma.scheduleSlot.findMany({
-    where: { studentId: input.studentId },
+    where: {
+      studentId: input.studentId,
+      effectiveFrom: { lte: input.date },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: input.date } }],
+    },
     select: { weekday: true, time: true },
   })
   const conflictsFixed = fixedSlots.some(

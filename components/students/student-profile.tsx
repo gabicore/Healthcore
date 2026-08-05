@@ -30,6 +30,7 @@ import { DeleteStudentDialog } from '@/components/students/delete-student-dialog
 import { PersonalDataPanel } from '@/components/students/personal-data-panel'
 import { StudentAttendancePanel } from '@/components/students/student-attendance'
 import { StudentContractsPanel } from '@/components/students/student-contracts'
+import { StudentFixedScheduleCard } from '@/components/students/student-fixed-schedule-card'
 import { PageHeader } from '@/components/page-header'
 import {
   Tabs,
@@ -87,7 +88,6 @@ import {
   type PhysicalAssessment,
   type ScheduleSlot,
   type Student,
-  type Weekday,
   age,
   bmi,
   bmiLabel,
@@ -102,13 +102,8 @@ import {
   contractTotalClasses,
   replaceScheduleSlots,
   replaceStudioHours,
-  availableSlotsForWeekday,
-  scheduleWithinPlanLimit,
   studentChargedValue,
   studentPaymentStatus,
-  morningSlots,
-  afternoonSlots,
-  weekdays,
   type PaymentStatus,
   type Plan,
 } from '@/lib/data'
@@ -164,11 +159,8 @@ export function StudentProfile({
   const [student, setStudent] = useState(initial)
   const [plans, setPlans] = useState<Plan[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
-  const [slotWeekday, setSlotWeekday] = useState<Weekday>('Segunda')
-  const [slotTime, setSlotTime] = useState('08:00')
   const [assessmentIndex, setAssessmentIndex] = useState(0)
   const [evolutionIndex, setEvolutionIndex] = useState(0)
-  const [scheduleTick, setScheduleTick] = useState(0)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [activeTab, setActiveTab] = useState(initialTab)
 
@@ -180,20 +172,6 @@ export function StudentProfile({
     upsertStudentInStore(student)
   }, [student])
 
-  const scheduleSlotOptions = useMemo(() => {
-    void scheduleTick
-    return availableSlotsForWeekday(slotWeekday)
-  }, [slotWeekday, scheduleTick])
-
-  const scheduleMorningOptions = useMemo(
-    () => scheduleSlotOptions.filter((t) => morningSlots.includes(t)),
-    [scheduleSlotOptions],
-  )
-  const scheduleAfternoonOptions = useMemo(
-    () => scheduleSlotOptions.filter((t) => afternoonSlots.includes(t)),
-    [scheduleSlotOptions],
-  )
-
   useEffect(() => {
     void fetchPlans()
       .then(setPlans)
@@ -204,21 +182,11 @@ export function StudentProfile({
       .then(([slots, hours]) => {
         replaceScheduleSlots(slots)
         replaceStudioHours(hours)
-        setScheduleTick((t) => t + 1)
       })
       .catch(() => {
         /* agenda fixa usa grade/horários padrão se a API falhar */
       })
   }, [])
-
-  useEffect(() => {
-    if (
-      scheduleSlotOptions.length > 0 &&
-      !scheduleSlotOptions.includes(slotTime)
-    ) {
-      setSlotTime(scheduleSlotOptions[0])
-    }
-  }, [scheduleSlotOptions, slotTime])
 
   function refreshStudentFromApi() {
     void fetchStudent(student.id)
@@ -293,14 +261,9 @@ export function StudentProfile({
       startDate: governingContract.startDate,
       endDate: governingContract.endDate,
       frequency: plan.frequency,
-      schedule: student.schedule,
-      planId: plan.id,
     })
     return `${months} ${months === 1 ? 'mês' : 'meses'} · ${total} aulas`
-  }, [governingContract, plans, student.schedule])
-
-  /** Agenda exibida: só com contrato assinado. */
-  const displaySchedule = hasSignedContract ? student.schedule : []
+  }, [governingContract, plans])
 
   const sortedAssessments = useMemo(
     () =>
@@ -584,52 +547,31 @@ export function StudentProfile({
     }
   }
 
-  function addScheduleSlot() {
-    if (!hasSignedContract || effectiveWeeklyLimit == null) {
-      toast.error('Contrato necessário', {
-        description:
-          'Assine um contrato ativo antes de definir a agenda fixa do aluno.',
-      })
-      return
-    }
-    const limit = effectiveWeeklyLimit
-    if (student.schedule.length >= limit) {
-      toast.error('Limite do plano atingido', {
-        description: `O plano permite no máximo ${limit} aula(s) fixa(s) por semana. Use a seção de frequência abaixo para marcar reposição.`,
-      })
-      return
-    }
-    if (scheduleSlotOptions.length === 0) {
-      toast.error('Estúdio fechado neste dia')
-      return
-    }
-    if (!scheduleSlotOptions.includes(slotTime)) {
-      toast.error('Horário fora do funcionamento do estúdio')
-      return
-    }
-    const exists = student.schedule.some(
-      (s) => s.weekday === slotWeekday && s.time === slotTime,
-    )
-    if (exists) {
-      toast.error('Este horário já está na agenda do aluno')
-      return
-    }
-    const next: ScheduleSlot = { weekday: slotWeekday, time: slotTime }
-    syncStudent({
-      schedule: [...student.schedule, next].sort((a, b) =>
-        `${a.weekday}${a.time}`.localeCompare(`${b.weekday}${b.time}`),
-      ),
+  async function registerSchedulePeriod(
+    slots: ScheduleSlot[],
+    effectiveFrom: string,
+  ) {
+    const updated = await persistProfile({
+      schedule: slots.map((s) => ({
+        weekday: s.weekday,
+        time: s.time,
+      })),
+      scheduleEffectiveFrom: effectiveFrom,
     })
-    toast.success('Horário fixo adicionado')
+    return Boolean(updated)
   }
 
-  function removeScheduleSlot(slot: ScheduleSlot) {
-    syncStudent({
-      schedule: student.schedule.filter(
-        (s) => !(s.weekday === slot.weekday && s.time === slot.time),
-      ),
+  async function deleteSchedulePeriod(
+    effectiveFrom: string,
+    effectiveTo: string | null,
+  ) {
+    const updated = await persistProfile({
+      deleteSchedulePeriod: {
+        effectiveFrom,
+        effectiveTo,
+      },
     })
-    toast.success('Horário removido')
+    return Boolean(updated)
   }
 
   const assessmentSeries = [...student.assessments]
@@ -1120,12 +1062,6 @@ export function StudentProfile({
                     <dd className="text-sm font-medium">
                       {governingContract!.planLabel ||
                         planName(effectivePlanId)}
-                      <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-                        Agenda fixa limitada a{' '}
-                        {effectiveWeeklyLimit != null
-                          ? `${effectiveWeeklyLimit}x/semana`
-                          : '—'}
-                      </span>
                     </dd>
                   </div>
                   <div className="flex flex-col gap-0.5 py-2">
@@ -1411,7 +1347,7 @@ export function StudentProfile({
             />
           </TabsContent>
 
-          <TabsContent value="agenda" className="flex flex-col gap-6">
+          <TabsContent value="agenda" className="flex flex-col gap-4">
             {!hasSignedContract ? (
               <EmptyState
                 icon={<CalendarClock className="size-6" />}
@@ -1420,152 +1356,24 @@ export function StudentProfile({
               />
             ) : (
               <>
-            <Card>
-              <CardContent className="flex flex-col gap-4">
-                    <div className="grid gap-3 rounded-xl border p-4 sm:grid-cols-[1fr_auto] sm:items-end">
-                      <div className="grid flex-1 grid-cols-2 gap-3">
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-xs text-muted-foreground">Dia</span>
-                          <Select
-                            value={slotWeekday}
-                            onValueChange={(v) =>
-                              setSlotWeekday((v as Weekday) ?? 'Segunda')
-                            }
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectGroup>
-                                {weekdays.map((d) => (
-                                  <SelectItem key={d} value={d}>
-                                    {d}
-                                  </SelectItem>
-                                ))}
-                              </SelectGroup>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-xs text-muted-foreground">
-                            Horário
-                          </span>
-                          <Select
-                            value={slotTime}
-                            onValueChange={(v) => setSlotTime(v ?? '08:00')}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {scheduleMorningOptions.length > 0 ? (
-                                <SelectGroup>
-                                  <SelectLabel>Manhã</SelectLabel>
-                                  {scheduleMorningOptions.map((t) => (
-                                    <SelectItem key={t} value={t}>
-                                      {t}
-                                    </SelectItem>
-                                  ))}
-                                </SelectGroup>
-                              ) : null}
-                              {scheduleAfternoonOptions.length > 0 ? (
-                                <SelectGroup>
-                                  <SelectLabel>Tarde</SelectLabel>
-                                  {scheduleAfternoonOptions.map((t) => (
-                                    <SelectItem key={t} value={t}>
-                                      {t}
-                                    </SelectItem>
-                                  ))}
-                                </SelectGroup>
-                              ) : null}
-                              {scheduleSlotOptions.length === 0 ? (
-                                <SelectGroup>
-                                  <SelectItem value={slotTime} disabled>
-                                    Estúdio fechado neste dia
-                                  </SelectItem>
-                                </SelectGroup>
-                              ) : null}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        onClick={addScheduleSlot}
-                        disabled={
-                          effectiveWeeklyLimit == null ||
-                          displaySchedule.length >= effectiveWeeklyLimit ||
-                          scheduleSlotOptions.length === 0
-                        }
-                      >
-                        <Plus data-icon="inline-start" />
-                        Adicionar horário
-                      </Button>
-                    </div>
+                <StudentAttendancePanel
+                  studentId={student.id}
+                  schedule={student.schedule}
+                  planId={effectivePlanId}
+                  fallbackPlanId={effectivePlanId}
+                  historyFrom={governingContract!.startDate}
+                  historyTo={governingContract!.endDate}
+                  plans={plans}
+                />
 
-                    {effectiveWeeklyLimit != null &&
-                    displaySchedule.length >= effectiveWeeklyLimit ? (
-                      <p className="text-xs text-muted-foreground">
-                        Limite do plano atingido. Para reposição ou aula extra, use a
-                        seção de frequência abaixo.
-                      </p>
-                    ) : null}
-
-                    {displaySchedule.length === 0 ? (
-                      <p className="rounded-lg border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                        Nenhum horário fixo
-                        {effectiveWeeklyLimit != null
-                          ? `. Adicione até ${effectiveWeeklyLimit} dia(s) conforme o plano.`
-                          : '.'}
-                      </p>
-                    ) : (
-                      <div className="flex flex-col gap-3 rounded-xl border p-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium">Horários ativos</p>
-                            <p className="text-xs text-muted-foreground">
-                              Remova um horário para trocar a grade fixa do aluno.
-                            </p>
-                          </div>
-                          <Badge variant="secondary">
-                            {displaySchedule.length} cadastrado(s)
-                          </Badge>
-                        </div>
-                        <Separator />
-                        <div className="flex flex-wrap gap-2">
-                          {displaySchedule.map((slot) => (
-                            <Badge
-                              key={slot.weekday + slot.time}
-                              variant="outline"
-                              className="gap-1.5 px-3 py-1.5 text-sm"
-                            >
-                              <CalendarClock className="size-3.5 text-muted-foreground" />
-                              {slot.weekday} · {slot.time}
-                              <button
-                                type="button"
-                                onClick={() => removeScheduleSlot(slot)}
-                                className="ml-0.5 rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                aria-label={`Remover ${slot.weekday} ${slot.time}`}
-                              >
-                                <Trash2 className="size-3" />
-                              </button>
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-              </CardContent>
-            </Card>
-
-            <StudentAttendancePanel
-              studentId={student.id}
-              schedule={displaySchedule}
-              planId={effectivePlanId}
-              fallbackPlanId={effectivePlanId}
-              historyFrom={governingContract!.startDate}
-              historyTo={governingContract!.endDate}
-              plans={plans}
-            />
+                <StudentFixedScheduleCard
+                  schedule={student.schedule}
+                  weeklyLimit={effectiveWeeklyLimit}
+                  contractStart={governingContract!.startDate}
+                  contractEnd={governingContract!.endDate}
+                  onRegister={registerSchedulePeriod}
+                  onDeletePeriod={deleteSchedulePeriod}
+                />
               </>
             )}
           </TabsContent>

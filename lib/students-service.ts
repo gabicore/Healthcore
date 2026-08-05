@@ -1,4 +1,9 @@
-import { priceWithDiscount, slotFitsStudioHour, type Weekday } from '@/lib/data'
+import {
+  dayBeforeIso,
+  priceWithDiscount,
+  slotFitsStudioHour,
+  type Weekday,
+} from '@/lib/data'
 import {
   composeAddress,
   hasStructuredAddress,
@@ -14,6 +19,7 @@ import {
   parseIsoDate,
   toDbPaymentMethod,
   toDbWeekday,
+  toIsoDateOnly,
 } from '@/lib/db-mappers'
 import { DEFAULT_STUDIO_ID } from '@/lib/constants'
 import {
@@ -72,11 +78,11 @@ async function assertScheduleFitsPlanFrequency(
     studentId,
     fallbackPlanId,
   )
-  if (schedule.length > limit) {
+  if (schedule.length !== limit) {
     throw new Error(
       fromActiveContract
-        ? `O plano do contrato ativo permite no máximo ${limit} aula(s) fixa(s) por semana`
-        : `O plano permite no máximo ${limit} aula(s) fixa(s) por semana`,
+        ? `A agenda fixa deve ter exatamente ${limit} aula(s) por semana, conforme o plano do contrato ativo`
+        : `A agenda fixa deve ter exatamente ${limit} aula(s) por semana, conforme o plano`,
     )
   }
 }
@@ -371,6 +377,21 @@ export async function updateStudentRecord(
     monthlyValue = input.monthlyValue
   }
 
+  if (input.deleteSchedulePeriod) {
+    const fromIso = input.deleteSchedulePeriod.effectiveFrom.slice(0, 10)
+    const toIso = input.deleteSchedulePeriod.effectiveTo?.slice(0, 10) ?? null
+    const deleted = await prisma.scheduleSlot.deleteMany({
+      where: {
+        studentId: id,
+        effectiveFrom: parseIsoDate(fromIso),
+        effectiveTo: toIso ? parseIsoDate(toIso) : null,
+      },
+    })
+    if (deleted.count === 0) {
+      throw new Error('Período de agenda não encontrado')
+    }
+  }
+
   if (input.schedule !== undefined) {
     const governing = await findGoverningContract(id)
     if (!governing && input.schedule.length > 0) {
@@ -380,7 +401,39 @@ export async function updateStudentRecord(
     }
     await assertScheduleFitsStudioHours(input.schedule)
     await assertScheduleFitsPlanFrequency(id, input.schedule, planId)
-    await prisma.scheduleSlot.deleteMany({ where: { studentId: id } })
+
+    const effectiveFromIso =
+      input.scheduleEffectiveFrom?.slice(0, 10) || toIsoDateOnly(new Date())
+    const effectiveFrom = parseIsoDate(effectiveFromIso)
+    const closeUntil = parseIsoDate(dayBeforeIso(effectiveFromIso))
+
+    const openSlots = await prisma.scheduleSlot.findMany({
+      where: { studentId: id, effectiveTo: null },
+    })
+
+    for (const slot of openSlots) {
+      const slotFrom = toIsoDateOnly(slot.effectiveFrom)
+      if (slotFrom >= effectiveFromIso) {
+        await prisma.scheduleSlot.delete({ where: { id: slot.id } })
+      } else {
+        await prisma.scheduleSlot.update({
+          where: { id: slot.id },
+          data: { effectiveTo: closeUntil },
+        })
+      }
+    }
+
+    if (input.schedule.length > 0) {
+      await prisma.scheduleSlot.createMany({
+        data: input.schedule.map((slot) => ({
+          studentId: id,
+          weekday: toDbWeekday(slot.weekday),
+          time: slot.time,
+          effectiveFrom,
+          effectiveTo: null,
+        })),
+      })
+    }
   }
 
   const addressPartsTouched =
@@ -484,16 +537,6 @@ export async function updateStudentRecord(
       ...(input.dueDay !== undefined ? { dueDay: input.dueDay } : {}),
       ...(input.paymentMethod !== undefined
         ? { paymentMethod: toDbPaymentMethod(input.paymentMethod) }
-        : {}),
-      ...(input.schedule !== undefined
-        ? {
-            schedule: {
-              create: input.schedule.map((slot) => ({
-                weekday: toDbWeekday(slot.weekday),
-                time: slot.time,
-              })),
-            },
-          }
         : {}),
     },
     include: studentDetailInclude,

@@ -127,6 +127,16 @@ export type ContractVersion = {
   summary: string
 }
 
+export type ContractSignatureInfo = {
+  id: string
+  signerName: string
+  signatureImage: string
+  signedAt: string
+  validationCode: string
+  documentHash: string
+  contractVersion: number
+}
+
 /** Contrato vinculado ao histórico do aluno (não é módulo isolado). */
 export type Contract = {
   id: string
@@ -149,6 +159,11 @@ export type Contract = {
   clauses: string[]
   signedAt?: string
   signatureName?: string
+  /** Token público para /assinar-contrato/:token (somente se ainda pendente). */
+  signingToken?: string
+  /** Código público de validação após assinatura. */
+  validationCode?: string
+  electronicSignature?: ContractSignatureInfo
   version: number
   previousVersions: ContractVersion[]
   history: ContractHistoryEntry[]
@@ -219,6 +234,10 @@ export type Expense = {
 export type ScheduleSlot = {
   weekday: Weekday
   time: string
+  /** Início da vigência (ISO date). Ausente = sempre válido (legado). */
+  effectiveFrom?: string
+  /** Fim da vigência inclusive. Null/ausente = ainda vigente. */
+  effectiveTo?: string | null
 }
 
 export type Student = {
@@ -374,79 +393,79 @@ export const expenses: Expense[] = [
 ]
 
 export const plans: Plan[] = [
-  // Semestral
+  // 1 aula por semana
   {
     id: 'sem-1x',
-    name: 'Semestral · 1x na semana',
+    name: 'Semestral · 1 aula por semana',
     period: 'semestral',
     frequency: 1,
-    frequencyLabel: '1x / semana',
+    frequencyLabel: '1 aula por semana',
     price: 280,
   },
   {
-    id: 'sem-2x',
-    name: 'Semestral · 2x na semana',
-    period: 'semestral',
-    frequency: 2,
-    frequencyLabel: '2x / semana',
-    price: 350,
-  },
-  {
-    id: 'sem-3x',
-    name: 'Semestral · 3x na semana',
-    period: 'semestral',
-    frequency: 3,
-    frequencyLabel: '3x / semana',
-    price: 400,
-  },
-  // Trimestral
-  {
     id: 'tri-1x',
-    name: 'Trimestral · 1x na semana',
+    name: 'Trimestral · 1 aula por semana',
     period: 'trimestral',
     frequency: 1,
-    frequencyLabel: '1x / semana',
+    frequencyLabel: '1 aula por semana',
     price: 300,
   },
   {
+    id: 'men-1x',
+    name: 'Mensal · 1 aula por semana',
+    period: 'mensal',
+    frequency: 1,
+    frequencyLabel: '1 aula por semana',
+    price: 360,
+  },
+  // 2 aulas por semana
+  {
+    id: 'sem-2x',
+    name: 'Semestral · 2 aulas por semana',
+    period: 'semestral',
+    frequency: 2,
+    frequencyLabel: '2 aulas por semana',
+    price: 350,
+  },
+  {
     id: 'tri-2x',
-    name: 'Trimestral · 2x na semana',
+    name: 'Trimestral · 2 aulas por semana',
     period: 'trimestral',
     frequency: 2,
-    frequencyLabel: '2x / semana',
+    frequencyLabel: '2 aulas por semana',
     price: 380,
   },
   {
-    id: 'tri-3x',
-    name: 'Trimestral · 3x na semana',
-    period: 'trimestral',
-    frequency: 3,
-    frequencyLabel: '3x / semana',
-    price: 420,
-  },
-  // Mensal
-  {
-    id: 'men-1x',
-    name: 'Mensal · 1x na semana',
-    period: 'mensal',
-    frequency: 1,
-    frequencyLabel: '1x / semana',
-    price: 360,
-  },
-  {
     id: 'men-2x',
-    name: 'Mensal · 2x na semana',
+    name: 'Mensal · 2 aulas por semana',
     period: 'mensal',
     frequency: 2,
-    frequencyLabel: '2x / semana',
+    frequencyLabel: '2 aulas por semana',
+    price: 400,
+  },
+  // 3 aulas por semana
+  {
+    id: 'sem-3x',
+    name: 'Semestral · 3 aulas por semana',
+    period: 'semestral',
+    frequency: 3,
+    frequencyLabel: '3 aulas por semana',
     price: 400,
   },
   {
+    id: 'tri-3x',
+    name: 'Trimestral · 3 aulas por semana',
+    period: 'trimestral',
+    frequency: 3,
+    frequencyLabel: '3 aulas por semana',
+    price: 420,
+  },
+  {
     id: 'men-3x',
-    name: 'Mensal · 3x na semana',
+    name: 'Mensal · 3 aulas por semana',
     period: 'mensal',
     frequency: 3,
-    frequencyLabel: '3x / semana',
+    frequencyLabel: '3 aulas por semana',
     price: 450,
   },
 ]
@@ -455,6 +474,36 @@ export const planPeriodLabel: Record<PlanPeriod, string> = {
   semestral: 'Semestral',
   trimestral: 'Trimestral',
   mensal: 'Mensal',
+}
+
+/** Ordem de exibição da tabela de preços. */
+export const planPeriodsOrdered: PlanPeriod[] = [
+  'semestral',
+  'trimestral',
+  'mensal',
+]
+
+export const planFrequencies: PlanFrequency[] = [1, 2, 3]
+
+export function planFrequencyLabel(frequency: number): string {
+  if (frequency === 1) return '1 aula por semana'
+  return `${frequency} aulas por semana`
+}
+
+export function findPlanByFrequencyAndPeriod(
+  list: Plan[],
+  frequency: number,
+  period: PlanPeriod,
+): Plan | undefined {
+  return list.find((p) => p.frequency === frequency && p.period === period)
+}
+
+export function formatPlanModalityLabel(
+  plan: Pick<Plan, 'period' | 'frequency' | 'frequencyLabel'>,
+): string {
+  return `${plan.frequencyLabel || planFrequencyLabel(plan.frequency)} · ${
+    planPeriodLabel[plan.period]
+  }`
 }
 
 export function plansByPeriod(period: PlanPeriod) {
@@ -2367,14 +2416,15 @@ export function countWeeksOverlappingRange(
 }
 
 /**
- * Quantidade real de aulas fixas na vigência do contrato.
- * Usa a mesma geração do histórico (agenda × datas).
- * Sem agenda: estima semanas reais × frequência.
+ * Total de aulas fixas na vigência do contrato:
+ * semanas reais entre início e fim × frequência semanal do plano.
+ * O fim já reflete o período do plano a partir da data de início.
  */
 export function contractTotalClasses(input: {
   startDate: string
   endDate: string
   frequency: number
+  /** Mantido por compatibilidade; o total contratado não depende da grade. */
   schedule?: ScheduleSlot[]
   planId?: string
 }): number {
@@ -2382,20 +2432,6 @@ export function contractTotalClasses(input: {
   if (!input.startDate || !input.endDate || input.startDate > input.endDate) {
     return 0
   }
-
-  const schedule = input.schedule ?? []
-  const limited = scheduleWithinPlanLimit(schedule, frequency)
-
-  if (limited.length > 0) {
-    return buildFixedSessionsForSchedule({
-      studentId: '_contract-count',
-      schedule: limited,
-      weeklyLimit: frequency,
-      fromDate: input.startDate,
-      toDate: input.endDate,
-    }).length
-  }
-
   return countWeeksOverlappingRange(input.startDate, input.endDate) * frequency
 }
 
@@ -2410,6 +2446,103 @@ export function scheduleWithinPlanLimit(
   if (schedule.length <= limit) return schedule
   return schedule.slice(0, limit)
 }
+
+/** Dia anterior em ISO (YYYY-MM-DD), sem dependência de fuso. */
+export function dayBeforeIso(iso: string) {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number)
+  const date = new Date(Date.UTC(y!, m! - 1, d!))
+  date.setUTCDate(date.getUTCDate() - 1)
+  return date.toISOString().slice(0, 10)
+}
+
+/** Slot vigente na data (inclusive). Sem effectiveFrom = legado sempre válido. */
+export function isScheduleSlotActiveOn(slot: ScheduleSlot, dateIso: string) {
+  const from = slot.effectiveFrom?.slice(0, 10)
+  const to = slot.effectiveTo?.slice(0, 10) || null
+  if (from && dateIso < from) return false
+  if (to && dateIso > to) return false
+  return true
+}
+
+/** Slots vigentes em uma data específica. */
+export function scheduleSlotsOnDate(schedule: ScheduleSlot[], dateIso: string) {
+  return schedule.filter((slot) => isScheduleSlotActiveOn(slot, dateIso))
+}
+
+/** Grade atual (sem data de fim). */
+export function currentScheduleSlots(schedule: ScheduleSlot[]) {
+  return schedule.filter((slot) => !slot.effectiveTo)
+}
+
+export type SchedulePeriod = {
+  key: string
+  effectiveFrom: string
+  effectiveTo: string | null
+  slots: ScheduleSlot[]
+  isCurrent: boolean
+}
+
+function weekdayOrder(day: Weekday) {
+  const index = weekdays.indexOf(day)
+  return index >= 0 ? index : 99
+}
+
+/** Ordena slots por dia da semana e horário. */
+export function sortScheduleSlots(slots: ScheduleSlot[]) {
+  return [...slots].sort((a, b) => {
+    const byDay = weekdayOrder(a.weekday) - weekdayOrder(b.weekday)
+    if (byDay !== 0) return byDay
+    return a.time.localeCompare(b.time)
+  })
+}
+
+/** Dias únicos do período, na ordem da semana. */
+export function periodWeekdays(slots: ScheduleSlot[]) {
+  const unique = new Set(slots.map((s) => s.weekday))
+  return weekdays.filter((day) => unique.has(day))
+}
+
+/** Agrupa slots em períodos de vigência (mesmo from/to). */
+export function groupScheduleIntoPeriods(
+  schedule: ScheduleSlot[],
+): SchedulePeriod[] {
+  const map = new Map<string, SchedulePeriod>()
+  for (const slot of schedule) {
+    const from = slot.effectiveFrom?.slice(0, 10) || '2000-01-01'
+    const to = slot.effectiveTo?.slice(0, 10) || null
+    const key = `${from}|${to ?? 'open'}`
+    const existing = map.get(key)
+    if (existing) {
+      existing.slots.push(slot)
+    } else {
+      map.set(key, {
+        key,
+        effectiveFrom: from,
+        effectiveTo: to,
+        slots: [slot],
+        isCurrent: to == null,
+      })
+    }
+  }
+
+  return [...map.values()]
+    .map((period) => ({
+      ...period,
+      slots: sortScheduleSlots(period.slots),
+    }))
+    .sort((a, b) => {
+      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1
+      return b.effectiveFrom.localeCompare(a.effectiveFrom)
+    })
+}
+
+function formatSchedulePeriodLabel(period: SchedulePeriod) {
+  const from = formatShortDate(period.effectiveFrom)
+  if (period.isCurrent || !period.effectiveTo) return `${from} — atual`
+  return `${from} — ${formatShortDate(period.effectiveTo)}`
+}
+
+export { formatSchedulePeriodLabel }
 
 /** Atualiza o aluno no store em memória (MVP sem banco). */
 export function patchStudent(id: string, patch: Partial<Student>) {
@@ -2534,6 +2667,11 @@ export function age(birthDate: string) {
   const monthDiff = today.getMonth() + 1 - m
   if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < d)) a--
   return a
+}
+
+/** Menor de idade para fins de responsável financeiro no contrato. */
+export function isMinor(birthDate: string) {
+  return age(birthDate) < 18
 }
 
 /** Calcula IMC a partir do peso (kg) e da altura (cm). */
@@ -3017,47 +3155,51 @@ export function formatWeekRange(monday: Date) {
   return `${start} – ${end}`
 }
 
-function demoStatusForSession(
-  studentId: string,
-  iso: string,
-  todayIso: string,
-): AttendanceStatus {
-  if (iso > todayIso) return 'agendada'
-  // Passado: presença padrão. Falta/cancelamento só contam após edição explícita
-  // (crédito de reposição não pode vir de status demonstrativo).
-  void studentId
-  return 'presente'
+function defaultStatusForGeneratedSession(): AttendanceStatus {
+  // Sem registro explícito de presença, a aula fica agendada —
+  // inclusive no passado (não inventar presença ao montar a grade).
+  return 'agendada'
 }
 
 /** Gera as aulas da semana a partir da grade fixa dos alunos ativos. */
 export function buildWeekSessions(monday: Date, today = new Date()): ClassSession[] {
-  const todayIso = toIsoDate(today)
+  void today
   const columns = getWeekColumns(monday)
   const sessions: ClassSession[] = []
 
   for (const student of students) {
     if (!student.active || !student.hasActiveContract) continue
     if (student.schedule.length === 0) continue
-    // Respeita o limite do plano mesmo se houver dados inconsistentes.
-    const limitedSchedule = scheduleWithinPlanLimit(
-      student.schedule,
-      student.planId,
-    )
-    for (const slot of limitedSchedule) {
-      const column = columns.find((c) => c.weekday === slot.weekday)
-      if (!column) continue
-      const allowed = availableSlotsForWeekday(slot.weekday)
-      if (!allowed.includes(slot.time)) continue
-      sessions.push({
-        id: `${student.id}-${column.iso}-${slot.time}`,
-        studentId: student.id,
-        date: column.iso,
-        weekday: slot.weekday,
-        time: slot.time,
-        status: demoStatusForSession(student.id, column.iso, todayIso),
-        type: 'fixa',
-      })
+
+    const weekCandidates: ClassSession[] = []
+    for (const column of columns) {
+      const daySlots = scheduleSlotsOnDate(student.schedule, column.iso)
+      for (const slot of daySlots) {
+        if (slot.weekday !== column.weekday) continue
+        const allowed = availableSlotsForWeekday(slot.weekday)
+        if (!allowed.includes(slot.time)) continue
+        weekCandidates.push({
+          id: `${student.id}-${column.iso}-${slot.time}`,
+          studentId: student.id,
+          date: column.iso,
+          weekday: slot.weekday,
+          time: slot.time,
+          status: defaultStatusForGeneratedSession(),
+          type: 'fixa',
+        })
+      }
     }
+
+    weekCandidates.sort((a, b) =>
+      `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
+    )
+
+    const weekLimit = planWeeklyLimit(student.planId)
+    sessions.push(
+      ...(weekLimit > 0
+        ? weekCandidates.slice(0, weekLimit)
+        : weekCandidates),
+    )
   }
 
   return sessions.sort((a, b) =>
@@ -3255,7 +3397,8 @@ export function upsertAttendanceSession(session: ClassSession) {
       (s) =>
         s.studentId === session.studentId &&
         s.date === session.date &&
-        s.time === session.time,
+        s.time === session.time &&
+        s.type === session.type,
     )
     if (bySlot >= 0) {
       attendanceLedger[bySlot] = session
@@ -3334,11 +3477,15 @@ export function getStudentAttendanceHistory(
     return []
   }
 
-  // Sem agenda completa (todos os horários do plano) não gera histórico.
+  // Grade atual precisa ter a frequência do plano para liberar o histórico.
   if (schedule.length === 0) {
     return []
   }
-  if (weeklyLimit != null && schedule.length < weeklyLimit) {
+  const activeSlots = currentScheduleSlots(schedule)
+  if (weeklyLimit != null && activeSlots.length < weeklyLimit) {
+    return []
+  }
+  if (weeklyLimit == null && activeSlots.length === 0) {
     return []
   }
 
@@ -3435,20 +3582,18 @@ export function buildFixedSessionsForSchedule(input: {
   toDate: string
   today?: Date
 }): ClassSession[] {
-  const today = input.today ?? new Date()
-  const todayIso = toIsoDate(today)
   const from = parseIsoDate(input.fromDate)
   const to = parseIsoDate(input.toDate)
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
     return []
   }
 
-  const limited =
+  const weekLimit =
     input.weeklyLimit != null
-      ? scheduleWithinPlanLimit(input.schedule, input.weeklyLimit)
+      ? Math.max(0, input.weeklyLimit)
       : input.planId
-        ? scheduleWithinPlanLimit(input.schedule, input.planId)
-        : input.schedule
+        ? planWeeklyLimit(input.planId)
+        : null
 
   const sessions: ClassSession[] = []
   let cursor = getMonday(from)
@@ -3456,22 +3601,40 @@ export function buildFixedSessionsForSchedule(input: {
 
   while (cursor <= lastMonday) {
     const columns = getWeekColumns(cursor)
-    for (const slot of limited) {
-      const column = columns.find((c) => c.weekday === slot.weekday)
-      if (!column) continue
+    const weekCandidates: ClassSession[] = []
+
+    for (const column of columns) {
       if (column.iso < input.fromDate || column.iso > input.toDate) continue
-      const allowed = availableSlotsForWeekday(slot.weekday)
-      if (!allowed.includes(slot.time)) continue
-      sessions.push({
-        id: `${input.studentId}-${column.iso}-${slot.time}`,
-        studentId: input.studentId,
-        date: column.iso,
-        weekday: slot.weekday,
-        time: slot.time,
-        status: demoStatusForSession(input.studentId, column.iso, todayIso),
-        type: 'fixa',
-      })
+      const daySlots = scheduleSlotsOnDate(input.schedule, column.iso)
+      for (const slot of daySlots) {
+        if (slot.weekday !== column.weekday) continue
+        const allowed = availableSlotsForWeekday(slot.weekday)
+        if (!allowed.includes(slot.time)) continue
+        weekCandidates.push({
+          id: `${input.studentId}-${column.iso}-${slot.time}`,
+          studentId: input.studentId,
+          date: column.iso,
+          weekday: slot.weekday,
+          time: slot.time,
+          status: defaultStatusForGeneratedSession(),
+          type: 'fixa',
+        })
+      }
     }
+
+    weekCandidates.sort((a, b) =>
+      `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
+    )
+
+    // Na semana da troca de grade, não ultrapassa a frequência do contrato:
+    // aulas já geradas pela grade antiga (ex.: Seg+Qua) contam; a nova grade
+    // (ex.: Qua+Sex) só entra nos dias restantes se ainda houver saldo na semana.
+    const weekSessions =
+      weekLimit == null
+        ? weekCandidates
+        : weekCandidates.slice(0, weekLimit)
+
+    sessions.push(...weekSessions)
     cursor = addDays(cursor, 7)
   }
 
@@ -3534,7 +3697,8 @@ export function buildWeeklyAttendanceChart(
 }
 
 /**
- * Reposições permitidas = aulas fixas com falta/cancelamento − reposições ativas.
+ * Reposições permitidas = aulas fixas com falta/cancelamento − reposições efetivas.
+ * Reposição com falta/cancelamento não consome crédito e pode ser reagendada.
  * Opcionalmente limitado à vigência do contrato atual.
  */
 export function getMakeupAllowance(
@@ -3555,14 +3719,28 @@ export function getMakeupAllowance(
     )
     .slice()
     .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+  /** Reposições que ainda precisam de nova data (falta/cancelamento). */
+  const failedMakeups = scoped
+    .filter(
+      (s) =>
+        s.type === 'reposicao' &&
+        (s.status === 'falta' || s.status === 'cancelada'),
+    )
+    .slice()
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+  /** Só reposições agendadas ou com presença contam como crédito usado. */
   const usedSessions = scoped
-    .filter((s) => s.type === 'reposicao' && s.status !== 'cancelada')
+    .filter(
+      (s) =>
+        s.type === 'reposicao' &&
+        (s.status === 'agendada' || s.status === 'presente'),
+    )
     .slice()
     .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
   const missed = missedSessions.length
   const used = usedSessions.length
   const remaining = Math.max(0, missed - used)
-  // FIFO: as primeiras faltas/cancelamentos são cobertas pelas reposições.
+  // FIFO: as primeiras faltas/cancelamentos são cobertas pelas reposições efetivas.
   const pendingMissed = missedSessions.slice(used)
   const coveredMissed = missedSessions.slice(0, used)
 
@@ -3572,6 +3750,7 @@ export function getMakeupAllowance(
     remaining,
     pendingMissed,
     coveredMissed,
+    failedMakeups,
     makeups: usedSessions,
   }
 }

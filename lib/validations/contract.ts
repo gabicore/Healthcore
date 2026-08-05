@@ -45,7 +45,6 @@ export const updateContractSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  status: contractStatusSchema.optional(),
   monthlyValue: z.number().nonnegative().optional(),
   discountPercent: z.number().int().min(0).max(100).optional(),
   discountNote: z.string().optional().nullable(),

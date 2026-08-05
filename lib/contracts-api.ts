@@ -42,7 +42,14 @@ export async function contractAction(
   id: string,
   action: 'send' | 'rescind' | 'renew' | 'sign' | 'email',
   payload?: { signatureName?: string },
-): Promise<Contract | { contract: Contract; emailedTo: string }> {
+): Promise<
+  | Contract
+  | {
+      contract: Contract
+      emailedTo: string
+      transport: 'resend' | 'smtp' | 'console'
+    }
+> {
   const response = await fetch(`/api/contratos/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

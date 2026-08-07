@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE `Student` ADD COLUMN `profession` VARCHAR(191) NOT NULL DEFAULT '';
+ALTER TABLE `Student` ADD COLUMN `convenio` VARCHAR(191) NOT NULL DEFAULT '';

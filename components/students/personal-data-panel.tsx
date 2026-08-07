@@ -6,7 +6,19 @@ import { toast } from 'sonner'
 
 import { ActiveBadge } from '@/components/status-badges'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
@@ -17,15 +29,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { InlineField } from '@/components/students/inline-field'
 import { composeAddress, lookupCep } from '@/lib/cep'
 import { composeEmergencyContact } from '@/lib/emergency-contact'
-import { formatShortDate, type Sex, type Student } from '@/lib/data'
+import { formatShortDate, type Sex, type Student, bmi, bmiLabel } from '@/lib/data'
 import { maskCep, maskCpf, maskPhone, onlyDigits } from '@/lib/masks'
 import { cn } from '@/lib/utils'
 import type {
   CreateStudentInput,
   UpdateStudentInput,
 } from '@/lib/validations/student'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  XAxis,
+  YAxis,
+} from 'recharts'
+
+const weightImcChartConfig = {
+  peso: { label: 'Peso (kg)', color: 'var(--chart-1)' },
+  imc: { label: 'IMC', color: 'var(--chart-2)' },
+} satisfies ChartConfig
 
 const sexes: Sex[] = ['Feminino', 'Masculino', 'Outro']
 
@@ -36,6 +61,10 @@ type PersonalDataForm = {
   cpf: string
   phone: string
   email: string
+  profession: string
+  convenio: boolean
+  convenioCarteirinha: string
+  convenioProduto: string
   cep: string
   street: string
   addressNumber: string
@@ -57,6 +86,10 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   cpf: 'CPF',
   phone: 'Telefone',
   email: 'E-mail',
+  profession: 'Profissão',
+  convenio: 'Convênio',
+  convenioCarteirinha: 'Nº da carteirinha',
+  convenioProduto: 'Produto',
   cep: 'CEP',
   street: 'Rua',
   addressNumber: 'Número',
@@ -75,6 +108,10 @@ const emptyForm = (): PersonalDataForm => ({
   cpf: '',
   phone: '',
   email: '',
+  profession: '',
+  convenio: false,
+  convenioCarteirinha: '',
+  convenioProduto: '',
   cep: '',
   street: '',
   addressNumber: '',
@@ -93,6 +130,7 @@ type PersonalDataPanelProps = {
   onSave?: (patch: UpdateStudentInput) => Promise<unknown>
   onCreate?: (input: CreateStudentInput) => Promise<unknown>
   onCancelCreate?: () => void
+  onUpdateNotes?: (notes: string) => void
 }
 
 function toForm(student: Student): PersonalDataForm {
@@ -103,6 +141,10 @@ function toForm(student: Student): PersonalDataForm {
     cpf: student.cpf,
     phone: student.phone,
     email: student.email,
+    profession: student.profession ?? '',
+    convenio: Boolean(student.convenio),
+    convenioCarteirinha: student.convenioCarteirinha ?? '',
+    convenioProduto: student.convenioProduto ?? '',
     cep: student.cep,
     street: student.street,
     addressNumber: student.addressNumber,
@@ -183,6 +225,10 @@ function buildPayload(form: PersonalDataForm) {
     cpf: form.cpf,
     phone: form.phone,
     email: form.email.trim(),
+    profession: form.profession.trim(),
+    convenio: form.convenio,
+    convenioCarteirinha: form.convenio ? form.convenioCarteirinha.trim() : '',
+    convenioProduto: form.convenio ? form.convenioProduto.trim() : '',
     cep: form.cep,
     street: form.street.trim(),
     addressNumber: form.addressNumber.trim(),
@@ -205,10 +251,11 @@ function ReadOnlyField({
   className,
 }: {
   label: string
-  value: string
+  value: string | null | undefined
   className?: string
 }) {
-  const empty = !value?.trim()
+  const text = typeof value === 'string' ? value : value == null ? '' : String(value)
+  const empty = !text.trim()
   return (
     <div className={cn('flex flex-col gap-0.5 py-2', className)}>
       <dt className="text-xs text-muted-foreground">{label}</dt>
@@ -218,7 +265,7 @@ function ReadOnlyField({
           empty ? 'italic text-muted-foreground' : 'text-foreground',
         )}
       >
-        {empty ? '—' : value}
+        {empty ? '—' : text}
       </dd>
     </div>
   )
@@ -231,6 +278,7 @@ export function PersonalDataPanel({
   onSave,
   onCreate,
   onCancelCreate,
+  onUpdateNotes,
 }: PersonalDataPanelProps) {
   const isCreate = mode === 'create'
   const [editing, setEditing] = useState(isCreate)
@@ -388,6 +436,10 @@ export function PersonalDataPanel({
       cpf: 'personal-cpf',
       phone: 'personal-phone',
       email: 'personal-email',
+      profession: 'personal-profession',
+      convenio: 'personal-convenio',
+      convenioCarteirinha: 'personal-convenio-carteirinha',
+      convenioProduto: 'personal-convenio-produto',
       cep: 'personal-cep',
       addressNumber: 'personal-number',
       street: 'personal-street',
@@ -401,7 +453,25 @@ export function PersonalDataPanel({
     return map[key] ?? null
   }
 
+  const latestAssessment = !isCreate && student
+    ? [...student.assessments].sort((a, b) => b.date.localeCompare(a.date))[0]
+    : undefined
+  const latestImc = latestAssessment
+    ? bmi(latestAssessment.weight, latestAssessment.height)
+    : null
+  const assessmentSeries =
+    !isCreate && student
+      ? [...student.assessments]
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .map((a) => ({
+            date: formatShortDate(a.date).slice(0, 5),
+            peso: a.weight,
+            imc: bmi(a.weight, a.height),
+          }))
+      : []
+
   return (
+    <div className="flex flex-col gap-4">
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-end gap-2 space-y-0">
         {editing ? (
@@ -533,6 +603,70 @@ export function PersonalDataPanel({
                 />
                 <FieldError>{fieldErrors.email}</FieldError>
               </Field>
+              <Field>
+                <FieldLabel htmlFor="personal-profession">Profissão</FieldLabel>
+                <Input
+                  id="personal-profession"
+                  value={form.profession}
+                  onChange={(e) => update('profession', e.target.value)}
+                  placeholder="Ex.: professora, aposentada"
+                />
+              </Field>
+              <Field>
+                <FieldLabel>Convênio</FieldLabel>
+                <Select
+                  value={form.convenio ? 'sim' : 'nao'}
+                  onValueChange={(v) => {
+                    const next = v === 'sim'
+                    setForm((prev) => ({
+                      ...prev,
+                      convenio: next,
+                      convenioCarteirinha: next ? prev.convenioCarteirinha : '',
+                      convenioProduto: next ? prev.convenioProduto : '',
+                    }))
+                  }}
+                >
+                  <SelectTrigger className="w-full" id="personal-convenio">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="nao">Não</SelectItem>
+                      <SelectItem value="sim">Sim</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              {form.convenio ? (
+                <>
+                  <Field>
+                    <FieldLabel htmlFor="personal-convenio-carteirinha">
+                      Nº da carteirinha
+                    </FieldLabel>
+                    <Input
+                      id="personal-convenio-carteirinha"
+                      value={form.convenioCarteirinha}
+                      onChange={(e) =>
+                        update('convenioCarteirinha', e.target.value)
+                      }
+                      placeholder="Número da carteirinha"
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="personal-convenio-produto">
+                      Produto
+                    </FieldLabel>
+                    <Input
+                      id="personal-convenio-produto"
+                      value={form.convenioProduto}
+                      onChange={(e) =>
+                        update('convenioProduto', e.target.value)
+                      }
+                      placeholder="Ex.: Unimed Empresarial"
+                    />
+                  </Field>
+                </>
+              ) : null}
               <Field data-invalid={!!fieldErrors.cep || undefined}>
                 <FieldLabel htmlFor="personal-cep">CEP</FieldLabel>
                 <Input
@@ -688,6 +822,23 @@ export function PersonalDataPanel({
             <ReadOnlyField label="CPF" value={student.cpf} />
             <ReadOnlyField label="Telefone" value={student.phone} />
             <ReadOnlyField label="E-mail" value={student.email} />
+            <ReadOnlyField label="Profissão" value={student.profession} />
+            <ReadOnlyField
+              label="Convênio"
+              value={student.convenio ? 'Sim' : 'Não'}
+            />
+            {student.convenio ? (
+              <>
+                <ReadOnlyField
+                  label="Nº da carteirinha"
+                  value={student.convenioCarteirinha}
+                />
+                <ReadOnlyField
+                  label="Produto"
+                  value={student.convenioProduto}
+                />
+              </>
+            ) : null}
             <ReadOnlyField label="CEP" value={student.cep} />
             <div className="flex flex-col gap-0.5 py-2">
               <dt className="text-xs text-muted-foreground">Situação</dt>
@@ -726,5 +877,121 @@ export function PersonalDataPanel({
         ) : null}
       </CardContent>
     </Card>
+
+    {!isCreate && student && onUpdateNotes ? (
+      <Card>
+        <CardHeader>
+          <CardTitle>Observações</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl>
+            <InlineField
+              label="Observações"
+              value={student.notes}
+              type="textarea"
+              onSave={onUpdateNotes}
+              className="py-0 [&_dt]:sr-only"
+            />
+          </dl>
+        </CardContent>
+      </Card>
+    ) : null}
+
+    {!isCreate && student ? (
+      <>
+        <Card>
+          <CardHeader>
+            <CardTitle>Visão geral</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">Peso atual</span>
+                <span className="text-2xl font-semibold">
+                  {latestAssessment ? `${latestAssessment.weight} kg` : '—'}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">IMC</span>
+                <span className="text-2xl font-semibold">{latestImc ?? '—'}</span>
+                {latestImc != null ? (
+                  <span className="text-xs text-muted-foreground">
+                    {bmiLabel(latestImc)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">
+                  Gordura / Massa muscular
+                </span>
+                <span className="text-2xl font-semibold">
+                  {latestAssessment?.bodyFat
+                    ? `${latestAssessment.bodyFat}%`
+                    : '—'}
+                  {latestAssessment?.muscleMass ? (
+                    <span className="text-base font-normal text-muted-foreground">
+                      {' '}
+                      · {latestAssessment.muscleMass} kg
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {assessmentSeries.length > 1 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Evolução de peso e IMC</CardTitle>
+              <CardDescription>
+                Histórico das avaliações registradas
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ChartContainer
+                config={weightImcChartConfig}
+                className="h-[240px] w-full"
+              >
+                <LineChart
+                  data={assessmentSeries}
+                  margin={{ left: 4, right: 8, top: 8 }}
+                >
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    width={32}
+                  />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Line
+                    dataKey="peso"
+                    type="monotone"
+                    stroke="var(--color-peso)"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                  <Line
+                    dataKey="imc"
+                    type="monotone"
+                    stroke="var(--color-imc)"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                </LineChart>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+        ) : null}
+      </>
+    ) : null}
+    </div>
   )
 }

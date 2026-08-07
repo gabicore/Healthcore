@@ -1,0 +1,18 @@
+-- Histórico clínico expandido
+ALTER TABLE `Student` ADD COLUMN `allergies` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `implants` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `clinicalAlerts` JSON NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `physicalActivity` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `smoking` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `alcoholUse` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `hydration` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `workPosture` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `workHours` VARCHAR(191) NOT NULL DEFAULT '';
+ALTER TABLE `Student` ADD COLUMN `sleepHours` VARCHAR(191) NOT NULL DEFAULT '';
+ALTER TABLE `Student` ADD COLUMN `sleepQuality` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `insomnia` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `previousTreatments` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `exams` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `medicalReports` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `mriExams` TEXT NOT NULL;
+ALTER TABLE `Student` ADD COLUMN `xrayExams` TEXT NOT NULL;

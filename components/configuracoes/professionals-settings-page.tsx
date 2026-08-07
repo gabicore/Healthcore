@@ -80,7 +80,7 @@ export function ProfessionalsSettingsPage() {
     <>
       <PageHeader
         title="Profissionais"
-        description="Equipe disponível na agenda e evoluções"
+        description="Equipe disponível na agenda, avaliações e evoluções"
       >
         <Button
           size="sm"
@@ -108,7 +108,9 @@ export function ProfessionalsSettingsPage() {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Nome</TableHead>
-                <TableHead className="hidden sm:table-cell">Função</TableHead>
+                <TableHead className="hidden sm:table-cell">
+                  Especialidade
+                </TableHead>
                 <TableHead className="hidden md:table-cell">Registro</TableHead>
                 <TableHead className="hidden lg:table-cell">E-mail</TableHead>
                 <TableHead className="w-10" />
@@ -142,7 +144,7 @@ export function ProfessionalsSettingsPage() {
                         try {
                           await updateProfessional(professional.id, { role })
                           await reloadProfessionals()
-                          notify('Função')
+                          notify('Especialidade')
                         } catch (err) {
                           toast.error(
                             errorMessage(err, 'Não foi possível salvar'),

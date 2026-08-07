@@ -12,6 +12,8 @@ import {
   fromDbWeekday,
   toIsoDateOnly,
 } from '@/lib/db-mappers'
+import { parseClinicalAlerts } from '@/lib/clinical-alerts'
+import type { AssessmentType } from '@/lib/validations/assessment'
 import type {
   Evolution as DbEvolution,
   EvolutionPhoto as DbPhoto,
@@ -20,6 +22,12 @@ import type {
   ScheduleSlot as DbSchedule,
   Student as DbStudent,
 } from '@prisma/client'
+
+function normalizeAssessmentType(value: string | null | undefined): AssessmentType {
+  if (value === 'Reavaliação' || value === 'Reavaliacao') return 'Reavaliação'
+  if (value === 'Alta') return 'Alta'
+  return 'Inicial'
+}
 
 type StudentWithRelations = DbStudent & {
   schedule?: DbSchedule[]
@@ -71,6 +79,23 @@ export function serializeAssessments(
     return {
       id: assessment.id,
       date: toIsoDateOnly(assessment.date),
+      assessmentType: normalizeAssessmentType(assessment.assessmentType),
+      professional: assessment.professional ?? '',
+      specialty: assessment.specialty ?? '',
+      service: assessment.service ?? '',
+      chiefComplaint: assessment.chiefComplaint ?? '',
+      painScale: assessment.painScale ?? null,
+      affectedRegion: assessment.affectedRegion ?? '',
+      functionalLimitations: assessment.functionalLimitations ?? '',
+      clinicalFindings: assessment.clinicalFindings ?? '',
+      testsPerformed: assessment.testsPerformed ?? '',
+      testResults: assessment.testResults ?? '',
+      treatmentObjectives: assessment.treatmentObjectives ?? '',
+      weeklyFrequency: assessment.weeklyFrequency ?? '',
+      estimatedSessions: assessment.estimatedSessions ?? '',
+      plannedTechniques: assessment.plannedTechniques ?? '',
+      guidelines: assessment.guidelines ?? '',
+      referrals: assessment.referrals ?? '',
       weight: assessment.weight,
       height,
       bodyFat: assessment.bodyFat ?? undefined,
@@ -128,6 +153,10 @@ export function serializeStudent(student: StudentWithRelations): Student {
     cpf: student.cpf,
     phone: student.phone,
     email: student.email,
+    profession: student.profession ?? '',
+    convenio: Boolean(student.convenio),
+    convenioCarteirinha: student.convenioCarteirinha ?? '',
+    convenioProduto: student.convenioProduto ?? '',
     cep: student.cep,
     street: student.street,
     addressNumber: student.addressNumber,
@@ -152,6 +181,28 @@ export function serializeStudent(student: StudentWithRelations): Student {
     surgeries: student.surgeries,
     restrictions: student.restrictions,
     medications: student.medications,
+    allergies: student.allergies ?? '',
+    implants: student.implants ?? '',
+    clinicalAlerts: parseClinicalAlerts(student.clinicalAlerts),
+    physicalActivity: student.physicalActivity ?? '',
+    smoking: student.smoking ?? '',
+    alcoholUse: student.alcoholUse ?? '',
+    hydration: student.hydration ?? '',
+    workPosture: student.workPosture ?? '',
+    workHours: student.workHours ?? '',
+    sleepHours: student.sleepHours ?? '',
+    sleepQuality: student.sleepQuality ?? '',
+    insomnia: student.insomnia ?? '',
+    previousTreatments: student.previousTreatments ?? '',
+    previousTreatmentFrequency: student.previousTreatmentFrequency ?? '',
+    treatmentResults: student.treatmentResults ?? '',
+    treatmentInterruptions: student.treatmentInterruptions ?? '',
+    treatmentResponse: student.treatmentResponse ?? '',
+    dischargeReason: student.dischargeReason ?? '',
+    exams: student.exams ?? '',
+    medicalReports: student.medicalReports ?? '',
+    mriExams: student.mriExams ?? '',
+    xrayExams: student.xrayExams ?? '',
     notes: student.notes,
     usesPilates: student.usesPilates ?? true,
     usesClinic: student.usesClinic ?? true,

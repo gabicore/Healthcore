@@ -291,6 +291,10 @@ export async function createStudentRecord(input: CreateStudentInput) {
       cpf: input.cpf ?? '',
       phone: input.phone ?? '',
       email: input.email ?? '',
+      profession: input.profession ?? '',
+      convenio: input.convenio ?? false,
+      convenioCarteirinha: input.convenio ? (input.convenioCarteirinha ?? '') : '',
+      convenioProduto: input.convenio ? (input.convenioProduto ?? '') : '',
       cep: input.cep ?? '',
       street,
       addressNumber,
@@ -312,6 +316,28 @@ export async function createStudentRecord(input: CreateStudentInput) {
       surgeries: input.surgeries ?? '',
       restrictions: input.restrictions ?? '',
       medications: input.medications ?? '',
+      allergies: input.allergies ?? '',
+      implants: input.implants ?? '',
+      clinicalAlerts: input.clinicalAlerts ?? [],
+      physicalActivity: input.physicalActivity ?? '',
+      smoking: input.smoking ?? '',
+      alcoholUse: input.alcoholUse ?? '',
+      hydration: input.hydration ?? '',
+      workPosture: input.workPosture ?? '',
+      workHours: input.workHours ?? '',
+      sleepHours: input.sleepHours ?? '',
+      sleepQuality: input.sleepQuality ?? '',
+      insomnia: input.insomnia ?? '',
+      previousTreatments: input.previousTreatments ?? '',
+      previousTreatmentFrequency: input.previousTreatmentFrequency ?? '',
+      treatmentResults: input.treatmentResults ?? '',
+      treatmentInterruptions: input.treatmentInterruptions ?? '',
+      treatmentResponse: input.treatmentResponse ?? '',
+      dischargeReason: input.dischargeReason ?? '',
+      exams: input.exams ?? '',
+      medicalReports: input.medicalReports ?? '',
+      mriExams: input.mriExams ?? '',
+      xrayExams: input.xrayExams ?? '',
       notes: input.notes ?? '',
       usesPilates: input.usesPilates ?? true,
       usesClinic: input.usesClinic ?? true,
@@ -500,6 +526,20 @@ export async function updateStudentRecord(
       ...(input.cpf !== undefined ? { cpf: input.cpf } : {}),
       ...(input.phone !== undefined ? { phone: input.phone } : {}),
       ...(input.email !== undefined ? { email: input.email } : {}),
+      ...(input.profession !== undefined
+        ? { profession: input.profession }
+        : {}),
+      ...(input.convenio !== undefined ? { convenio: input.convenio } : {}),
+      ...(input.convenio === false
+        ? { convenioCarteirinha: '', convenioProduto: '' }
+        : {
+            ...(input.convenioCarteirinha !== undefined
+              ? { convenioCarteirinha: input.convenioCarteirinha }
+              : {}),
+            ...(input.convenioProduto !== undefined
+              ? { convenioProduto: input.convenioProduto }
+              : {}),
+          }),
       ...(input.cep !== undefined ? { cep: input.cep } : {}),
       ...(input.street !== undefined ? { street: input.street } : {}),
       ...(input.addressNumber !== undefined
@@ -542,6 +582,52 @@ export async function updateStudentRecord(
       ...(input.medications !== undefined
         ? { medications: input.medications }
         : {}),
+      ...(input.allergies !== undefined ? { allergies: input.allergies } : {}),
+      ...(input.implants !== undefined ? { implants: input.implants } : {}),
+      ...(input.clinicalAlerts !== undefined
+        ? { clinicalAlerts: input.clinicalAlerts }
+        : {}),
+      ...(input.physicalActivity !== undefined
+        ? { physicalActivity: input.physicalActivity }
+        : {}),
+      ...(input.smoking !== undefined ? { smoking: input.smoking } : {}),
+      ...(input.alcoholUse !== undefined
+        ? { alcoholUse: input.alcoholUse }
+        : {}),
+      ...(input.hydration !== undefined ? { hydration: input.hydration } : {}),
+      ...(input.workPosture !== undefined
+        ? { workPosture: input.workPosture }
+        : {}),
+      ...(input.workHours !== undefined ? { workHours: input.workHours } : {}),
+      ...(input.sleepHours !== undefined ? { sleepHours: input.sleepHours } : {}),
+      ...(input.sleepQuality !== undefined
+        ? { sleepQuality: input.sleepQuality }
+        : {}),
+      ...(input.insomnia !== undefined ? { insomnia: input.insomnia } : {}),
+      ...(input.previousTreatments !== undefined
+        ? { previousTreatments: input.previousTreatments }
+        : {}),
+      ...(input.previousTreatmentFrequency !== undefined
+        ? { previousTreatmentFrequency: input.previousTreatmentFrequency }
+        : {}),
+      ...(input.treatmentResults !== undefined
+        ? { treatmentResults: input.treatmentResults }
+        : {}),
+      ...(input.treatmentInterruptions !== undefined
+        ? { treatmentInterruptions: input.treatmentInterruptions }
+        : {}),
+      ...(input.treatmentResponse !== undefined
+        ? { treatmentResponse: input.treatmentResponse }
+        : {}),
+      ...(input.dischargeReason !== undefined
+        ? { dischargeReason: input.dischargeReason }
+        : {}),
+      ...(input.exams !== undefined ? { exams: input.exams } : {}),
+      ...(input.medicalReports !== undefined
+        ? { medicalReports: input.medicalReports }
+        : {}),
+      ...(input.mriExams !== undefined ? { mriExams: input.mriExams } : {}),
+      ...(input.xrayExams !== undefined ? { xrayExams: input.xrayExams } : {}),
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
       ...(input.usesPilates !== undefined
         ? { usesPilates: input.usesPilates }

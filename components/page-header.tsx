@@ -4,7 +4,7 @@ import { Separator } from '@/components/ui/separator'
 
 type PageHeaderProps = {
   title: string
-  description?: string
+  description?: ReactNode
   children?: ReactNode
 }
 
@@ -13,14 +13,12 @@ export function PageHeader({ title, description, children }: PageHeaderProps) {
     <header className="sticky top-0 z-10 flex min-h-16 flex-wrap items-center gap-3 border-b border-border bg-background/80 px-4 py-3 backdrop-blur md:px-6">
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-1 h-6" />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <h1 className="truncate text-lg font-semibold tracking-tight">
           {title}
         </h1>
         {description ? (
-          <p className="truncate text-sm text-muted-foreground">
-            {description}
-          </p>
+          <div className="text-sm text-muted-foreground">{description}</div>
         ) : null}
       </div>
       {children ? (

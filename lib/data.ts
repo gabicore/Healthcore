@@ -71,6 +71,23 @@ export type StudioHour = {
 export type PhysicalAssessment = {
   id: string
   date: string
+  assessmentType: 'Inicial' | 'Reavaliação' | 'Alta'
+  professional: string
+  specialty: string
+  service: string
+  chiefComplaint: string
+  painScale?: number | null
+  affectedRegion: string
+  functionalLimitations: string
+  clinicalFindings: string
+  testsPerformed: string
+  testResults: string
+  treatmentObjectives: string
+  weeklyFrequency: string
+  estimatedSessions: string
+  plannedTechniques: string
+  guidelines: string
+  referrals: string
   weight: number
   /** Altura em centímetros. */
   height: number
@@ -258,6 +275,10 @@ export type Student = {
   cpf: string
   phone: string
   email: string
+  profession: string
+  convenio: boolean
+  convenioCarteirinha: string
+  convenioProduto: string
   cep: string
   street: string
   addressNumber: string
@@ -283,6 +304,28 @@ export type Student = {
   surgeries: string
   restrictions: string
   medications: string
+  allergies: string
+  implants: string
+  clinicalAlerts: string[]
+  physicalActivity: string
+  smoking: string
+  alcoholUse: string
+  hydration: string
+  workPosture: string
+  workHours: string
+  sleepHours: string
+  sleepQuality: string
+  insomnia: string
+  previousTreatments: string
+  previousTreatmentFrequency: string
+  treatmentResults: string
+  treatmentInterruptions: string
+  treatmentResponse: string
+  dischargeReason: string
+  exams: string
+  medicalReports: string
+  mriExams: string
+  xrayExams: string
   notes: string
   usesPilates?: boolean
   usesClinic?: boolean
@@ -761,11 +804,39 @@ function assessment(
   m: PhysicalAssessment['measures'],
   bodyFat?: number,
   muscleMass?: number,
+  clinical?: Partial<
+    Omit<PhysicalAssessment, 'id' | 'date' | 'weight' | 'height' | 'measures' | 'bodyFat' | 'muscleMass'>
+  >,
 ): PhysicalAssessment {
   // Dados legados em metros (< 3) passam a cm.
   const heightCm =
     height > 0 && height < 3 ? Math.round(height * 1000) / 10 : height
-  return { id, date, weight, height: heightCm, bodyFat, muscleMass, measures: m }
+  return {
+    id,
+    date,
+    weight,
+    height: heightCm,
+    bodyFat,
+    muscleMass,
+    assessmentType: clinical?.assessmentType ?? 'Inicial',
+    professional: clinical?.professional ?? '',
+    specialty: clinical?.specialty ?? '',
+    service: clinical?.service ?? '',
+    chiefComplaint: clinical?.chiefComplaint ?? '',
+    painScale: clinical?.painScale ?? null,
+    affectedRegion: clinical?.affectedRegion ?? '',
+    functionalLimitations: clinical?.functionalLimitations ?? '',
+    clinicalFindings: clinical?.clinicalFindings ?? '',
+    testsPerformed: clinical?.testsPerformed ?? '',
+    testResults: clinical?.testResults ?? '',
+    treatmentObjectives: clinical?.treatmentObjectives ?? '',
+    weeklyFrequency: clinical?.weeklyFrequency ?? '',
+    estimatedSessions: clinical?.estimatedSessions ?? '',
+    plannedTechniques: clinical?.plannedTechniques ?? '',
+    guidelines: clinical?.guidelines ?? '',
+    referrals: clinical?.referrals ?? '',
+    measures: m,
+  }
 }
 
 export const students: Student[] = [
@@ -777,6 +848,10 @@ export const students: Student[] = [
     cpf: '123.456.789-01',
     phone: '(11) 99123-4567',
     email: 'ana.souza@email.com',
+    profession: 'Contadora',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '05410-000',
     street: '',
     addressNumber: '',
@@ -793,10 +868,32 @@ export const students: Student[] = [
     since: '2024-02-10',
     objective: 'Fortalecimento do core e alívio de dor lombar crônica.',
     pathologies: 'Hérnia de disco L4-L5, escoliose leve.',
-    injuries: 'Estiramento lombar em 2023.',
+    injuries: 'Estiramento lombar em 2023 após esforço no trabalho.',
     surgeries: 'Nenhuma.',
-    restrictions: 'Evitar flexão de tronco com carga.',
-    medications: 'Relaxante muscular em crises.',
+    restrictions: 'Evitar flexão de tronco com carga e impactos repetitivos.',
+    medications: 'Relaxante muscular em crises (ciclobenzaprina sob orientação).',
+    allergies: 'Dipirona; contraste iodado (relato).',
+    implants: 'Nenhum.',
+    clinicalAlerts: ['Restrição médica importante'],
+    physicalActivity: 'Pilates 2x/semana; caminhadas leves nos fins de semana.',
+    smoking: 'Não fumante.',
+    alcoholUse: 'Social, ocasional (1–2x/mês).',
+    hydration: 'Cerca de 1,5 L de água/dia; tende a beber pouco no expediente.',
+    workPosture: 'Predominantemente sentada em computador; home office parcial.',
+    workHours: '8–9 h/dia',
+    sleepHours: '6–7 h',
+    sleepQuality: 'Sono irregular em períodos de dor lombar.',
+    insomnia: 'Dificuldade para iniciar o sono 2–3 noites por semana.',
+    previousTreatments: 'Fisioterapia convencional em 2023 (12 sessões). RPG pontual.',
+    previousTreatmentFrequency: '2x por semana (fisioterapia); RPG quinzenal.',
+    treatmentResults: 'Redução parcial da dor lombar e melhora da mobilidade; ainda com crises sob sobrecarga postural.',
+    treatmentInterruptions: 'Pausa de ~2 meses no fim de 2023 por viagem e agenda de trabalho.',
+    treatmentResponse: 'Boa adesão aos exercícios; responde bem a estabilização do core. Dor retorna com longas horas sentada.',
+    dischargeReason: 'Alta parcial por melhora funcional; orientada a manter Pilates preventivo.',
+    exams: 'Hemograma e PCR (jan/2025) — dentro da normalidade.',
+    medicalReports: 'Laudo ortopédico (fev/2024): hérnia L4-L5 sem indicação cirúrgica no momento.',
+    mriExams: 'RM de coluna lombar (fev/2024): hérnia discal L4-L5 com compressão leve.',
+    xrayExams: 'RX panorâmico de coluna (jan/2024): escoliose toracolombar leve.',
     notes: 'Trabalha muitas horas sentada. Prefere aulas pela manhã.',
     planId: 'sem-2x',
     monthlyValue: 315,
@@ -867,6 +964,31 @@ export const students: Student[] = [
         },
         26.5,
         26,
+        {
+          assessmentType: 'Reavaliação',
+          professional: 'Dra. Camila Rezende',
+          specialty: 'Pilates',
+          service: 'Pilates clínico',
+          chiefComplaint: 'Dor lombar crônica ao final do expediente e ao acordar.',
+          painScale: 4,
+          affectedRegion: 'Coluna lombar (L4-L5), bilateral com predomínio à direita.',
+          functionalLimitations:
+            'Dificuldade para permanecer sentada por mais de 1h; desconforto ao calçar sapatos.',
+          clinicalFindings:
+            'Retificação lombar, tensão em eretores e quadrado lombar; mobilidade de quadril reduzida.',
+          testsPerformed: 'Teste de Schober; elevação da perna estendida; ponte isométrica.',
+          testResults:
+            'Schober reduzido; Lasègue negativo; ponte mantida por 25s com compensação lombar.',
+          treatmentObjectives:
+            '1. Reduzir dor lombar em repouso e ao trabalho.\n2. Fortalecer core e estabilizadores.\n3. Melhorar postura sentada e autonomia funcional.',
+          weeklyFrequency: '2x por semana',
+          estimatedSessions: '16',
+          plannedTechniques:
+            'Estabilização segmentar, mobilidade de quadril, alongamento de cadeia posterior, controle respiratório.',
+          guidelines:
+            'Pausas posturais a cada 50 min; evitar flexão de tronco com carga; hidratação.',
+          referrals: 'Retorno ortopédico se dor > 7 ou irradiação para MMII.',
+        },
       ),
     ],
     evolutions: [
@@ -909,6 +1031,10 @@ export const students: Student[] = [
     cpf: '234.567.890-12',
     phone: '(11) 98456-7788',
     email: 'cadu.lima@email.com',
+    profession: '',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '01402-000',
     street: '',
     addressNumber: '',
@@ -929,6 +1055,28 @@ export const students: Student[] = [
     surgeries: 'Reconstrução de LCA (jan/2023).',
     restrictions: 'Evitar impacto e agachamento profundo.',
     medications: 'Anti-inflamatório conforme necessidade.',
+    allergies: '',
+    implants: '',
+    clinicalAlerts: [],
+    physicalActivity: '',
+    smoking: '',
+    alcoholUse: '',
+    hydration: '',
+    workPosture: '',
+    workHours: '',
+    sleepHours: '',
+    sleepQuality: '',
+    insomnia: '',
+    previousTreatments: '',
+    previousTreatmentFrequency: '',
+    treatmentResults: '',
+    treatmentInterruptions: '',
+    treatmentResponse: '',
+    dischargeReason: '',
+    exams: '',
+    medicalReports: '',
+    mriExams: '',
+    xrayExams: '',
     notes: 'Corredor amador, deseja retornar às corridas com segurança.',
     planId: 'sem-3x',
     monthlyValue: 400,
@@ -992,6 +1140,10 @@ export const students: Student[] = [
     cpf: '345.678.901-23',
     phone: '(11) 99555-2211',
     email: 'mari.oliveira@email.com',
+    profession: '',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '05435-000',
     street: '',
     addressNumber: '',
@@ -1012,6 +1164,28 @@ export const students: Student[] = [
     surgeries: 'Nenhuma.',
     restrictions: 'Nenhuma relevante.',
     medications: 'Nenhum.',
+    allergies: '',
+    implants: '',
+    clinicalAlerts: [],
+    physicalActivity: '',
+    smoking: '',
+    alcoholUse: '',
+    hydration: '',
+    workPosture: '',
+    workHours: '',
+    sleepHours: '',
+    sleepQuality: '',
+    insomnia: '',
+    previousTreatments: '',
+    previousTreatmentFrequency: '',
+    treatmentResults: '',
+    treatmentInterruptions: '',
+    treatmentResponse: '',
+    dischargeReason: '',
+    exams: '',
+    medicalReports: '',
+    mriExams: '',
+    xrayExams: '',
     notes: 'Designer, passa longos períodos ao computador.',
     planId: 'sem-1x',
     monthlyValue: 280,
@@ -1059,6 +1233,10 @@ export const students: Student[] = [
     cpf: '456.789.012-34',
     phone: '(11) 98123-9090',
     email: 'roberto.nunes@email.com',
+    profession: '',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '05422-000',
     street: '',
     addressNumber: '',
@@ -1079,6 +1257,28 @@ export const students: Student[] = [
     surgeries: 'Prótese de quadril direito (2021).',
     restrictions: 'Amplitude de quadril limitada, sem impacto.',
     medications: 'Anti-hipertensivo diário.',
+    allergies: '',
+    implants: '',
+    clinicalAlerts: [],
+    physicalActivity: '',
+    smoking: '',
+    alcoholUse: '',
+    hydration: '',
+    workPosture: '',
+    workHours: '',
+    sleepHours: '',
+    sleepQuality: '',
+    insomnia: '',
+    previousTreatments: '',
+    previousTreatmentFrequency: '',
+    treatmentResults: '',
+    treatmentInterruptions: '',
+    treatmentResponse: '',
+    dischargeReason: '',
+    exams: '',
+    medicalReports: '',
+    mriExams: '',
+    xrayExams: '',
     notes: 'Aposentado, muito assíduo. Gosta de acompanhar a evolução.',
     planId: 'tri-2x',
     monthlyValue: 380,
@@ -1129,6 +1329,10 @@ export const students: Student[] = [
     cpf: '567.890.123-45',
     phone: '(11) 99888-7766',
     email: 'fernanda.alves@email.com',
+    profession: '',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '05408-000',
     street: '',
     addressNumber: '',
@@ -1149,6 +1353,28 @@ export const students: Student[] = [
     surgeries: 'Nenhuma.',
     restrictions: 'Sem decúbito dorsal prolongado, sem abdominais tradicionais.',
     medications: 'Suplementação pré-natal.',
+    allergies: '',
+    implants: '',
+    clinicalAlerts: ['Gestante'],
+    physicalActivity: '',
+    smoking: '',
+    alcoholUse: '',
+    hydration: '',
+    workPosture: '',
+    workHours: '',
+    sleepHours: '',
+    sleepQuality: '',
+    insomnia: '',
+    previousTreatments: '',
+    previousTreatmentFrequency: '',
+    treatmentResults: '',
+    treatmentInterruptions: '',
+    treatmentResponse: '',
+    dischargeReason: '',
+    exams: '',
+    medicalReports: '',
+    mriExams: '',
+    xrayExams: '',
     notes: 'Liberação médica em dia. Acompanhar sinais de fadiga.',
     planId: 'men-2x',
     monthlyValue: 400,
@@ -1199,6 +1425,10 @@ export const students: Student[] = [
     cpf: '678.901.234-56',
     phone: '(11) 99222-1010',
     email: 'juliana.prado@email.com',
+    profession: '',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '05406-000',
     street: '',
     addressNumber: '',
@@ -1219,6 +1449,28 @@ export const students: Student[] = [
     surgeries: 'Nenhuma.',
     restrictions: 'Nenhuma.',
     medications: 'Nenhum.',
+    allergies: '',
+    implants: '',
+    clinicalAlerts: [],
+    physicalActivity: '',
+    smoking: '',
+    alcoholUse: '',
+    hydration: '',
+    workPosture: '',
+    workHours: '',
+    sleepHours: '',
+    sleepQuality: '',
+    insomnia: '',
+    previousTreatments: '',
+    previousTreatmentFrequency: '',
+    treatmentResults: '',
+    treatmentInterruptions: '',
+    treatmentResponse: '',
+    dischargeReason: '',
+    exams: '',
+    medicalReports: '',
+    mriExams: '',
+    xrayExams: '',
     notes: 'Contrato pausado desde set/2025. Retorno previsto.',
     planId: 'men-1x',
     monthlyValue: 360,
@@ -1254,6 +1506,10 @@ export const students: Student[] = [
     cpf: '789.012.345-67',
     phone: '(11) 98765-4321',
     email: 'pedro.costa@email.com',
+    profession: '',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '05416-000',
     street: '',
     addressNumber: '',
@@ -1274,6 +1530,28 @@ export const students: Student[] = [
     surgeries: 'Nenhuma.',
     restrictions: 'Cuidado com apoio unipodal à esquerda.',
     medications: 'Nenhum.',
+    allergies: '',
+    implants: '',
+    clinicalAlerts: [],
+    physicalActivity: '',
+    smoking: '',
+    alcoholUse: '',
+    hydration: '',
+    workPosture: '',
+    workHours: '',
+    sleepHours: '',
+    sleepQuality: '',
+    insomnia: '',
+    previousTreatments: '',
+    previousTreatmentFrequency: '',
+    treatmentResults: '',
+    treatmentInterruptions: '',
+    treatmentResponse: '',
+    dischargeReason: '',
+    exams: '',
+    medicalReports: '',
+    mriExams: '',
+    xrayExams: '',
     notes: 'Atleta de vôlei universitário.',
     planId: 'tri-3x',
     monthlyValue: 420,
@@ -1325,6 +1603,10 @@ export const students: Student[] = [
     cpf: '890.123.456-78',
     phone: '(11) 99010-2030',
     email: 'bia.ramos@email.com',
+    profession: '',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '05433-000',
     street: '',
     addressNumber: '',
@@ -1345,6 +1627,28 @@ export const students: Student[] = [
     surgeries: 'Nenhuma.',
     restrictions: 'Respeitar limite de dor, evitar sobrecarga.',
     medications: 'Antidepressivo e analgésico conforme prescrição.',
+    allergies: '',
+    implants: '',
+    clinicalAlerts: [],
+    physicalActivity: '',
+    smoking: '',
+    alcoholUse: '',
+    hydration: '',
+    workPosture: '',
+    workHours: '',
+    sleepHours: '',
+    sleepQuality: '',
+    insomnia: '',
+    previousTreatments: '',
+    previousTreatmentFrequency: '',
+    treatmentResults: '',
+    treatmentInterruptions: '',
+    treatmentResponse: '',
+    dischargeReason: '',
+    exams: '',
+    medicalReports: '',
+    mriExams: '',
+    xrayExams: '',
     notes: 'Responde bem a exercícios de baixa intensidade e alongamento.',
     planId: 'sem-2x',
     monthlyValue: 350,
@@ -1395,6 +1699,10 @@ export const students: Student[] = [
     cpf: '456.789.123-45',
     phone: '(11) 98765-4321',
     email: 'helena.nogueira@email.com',
+    profession: '',
+    convenio: false,
+    convenioCarteirinha: '',
+    convenioProduto: '',
     cep: '05422-001',
     street: 'Rua Teodoro Sampaio',
     addressNumber: '1820',
@@ -1423,6 +1731,28 @@ export const students: Student[] = [
       'Evitar elevação acima de 90° com carga no ombro D nas primeiras semanas; progressão orientada pela fisioterapeuta.',
     medications:
       'Analgésico sob demanda em crises; uso eventual de anti-inflamatório conforme orientação médica.',
+    allergies: '',
+    implants: '',
+    clinicalAlerts: [],
+    physicalActivity: '',
+    smoking: '',
+    alcoholUse: '',
+    hydration: '',
+    workPosture: 'Trabalho sentada em computador',
+    workHours: '8h/dia',
+    sleepHours: '',
+    sleepQuality: '',
+    insomnia: '',
+    previousTreatments: '',
+    previousTreatmentFrequency: '',
+    treatmentResults: '',
+    treatmentInterruptions: '',
+    treatmentResponse: '',
+    dischargeReason: '',
+    exams: '',
+    medicalReports: '',
+    mriExams: '',
+    xrayExams: '',
     notes:
       'Perfil exemplo completo (Pilates + Fisioterapia). Designer gráfica, passa muitas horas no computador. Prefere Pilates às terças/quintas e fisioterapia às sextas pela manhã.',
     planId: 'sem-2x',

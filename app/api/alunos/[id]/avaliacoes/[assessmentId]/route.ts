@@ -28,9 +28,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const { assessmentId } = await context.params
     const body = await request.json()
     const input = updateAssessmentSchema.parse(body)
-    const updated = await updateAssessmentRecord(assessmentId, input)
-    if (!updated) return jsonError('Avaliação não encontrada', 404)
-    return jsonOk(updated)
+    try {
+      const updated = await updateAssessmentRecord(assessmentId, input)
+      if (!updated) return jsonError('Avaliação não encontrada', 404)
+      return jsonOk(updated)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.includes('avaliação inicial') ||
+          error.message.includes('avaliação de alta'))
+      ) {
+        return jsonError(error.message, 400)
+      }
+      throw error
+    }
   } catch (error) {
     return handleRouteError(error)
   }

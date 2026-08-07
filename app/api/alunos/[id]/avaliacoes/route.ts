@@ -37,7 +37,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
       if (
         error instanceof Error &&
-        error.message.includes('contrato ativo')
+        (error.message.includes('contrato ativo') ||
+          error.message.includes('avaliação inicial') ||
+          error.message.includes('avaliação de alta'))
       ) {
         return jsonError(error.message, 400)
       }

@@ -67,6 +67,10 @@ type EditableStudent = Pick<
   | 'cpf'
   | 'phone'
   | 'email'
+  | 'profession'
+  | 'convenio'
+  | 'convenioCarteirinha'
+  | 'convenioProduto'
   | 'cep'
   | 'street'
   | 'addressNumber'
@@ -107,6 +111,10 @@ function toEditable(student: Student): EditableStudent {
     cpf: student.cpf,
     phone: student.phone,
     email: student.email,
+    profession: student.profession ?? '',
+    convenio: Boolean(student.convenio),
+    convenioCarteirinha: student.convenioCarteirinha ?? '',
+    convenioProduto: student.convenioProduto ?? '',
     cep: student.cep,
     street: student.street,
     addressNumber: student.addressNumber,
@@ -354,6 +362,12 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
     onSave({
       ...payload,
       name: form.name.trim(),
+      profession: form.profession.trim(),
+      convenio: form.convenio,
+      convenioCarteirinha: form.convenio
+        ? form.convenioCarteirinha.trim()
+        : '',
+      convenioProduto: form.convenio ? form.convenioProduto.trim() : '',
       email: form.email.trim(),
       phone: form.phone.trim(),
       cpf: form.cpf.trim(),
@@ -480,6 +494,74 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                       placeholder="email@exemplo.com"
                     />
                   </Field>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="edit-profession">Profissão</FieldLabel>
+                      <Input
+                        id="edit-profession"
+                        value={form.profession}
+                        onChange={(e) => update('profession', e.target.value)}
+                        placeholder="Ex.: professora, aposentada"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel>Convênio</FieldLabel>
+                      <Select
+                        value={form.convenio ? 'sim' : 'nao'}
+                        onValueChange={(v) => {
+                          const next = v === 'sim'
+                          setForm((prev) => ({
+                            ...prev,
+                            convenio: next,
+                            convenioCarteirinha: next
+                              ? prev.convenioCarteirinha
+                              : '',
+                            convenioProduto: next ? prev.convenioProduto : '',
+                          }))
+                        }}
+                      >
+                        <SelectTrigger className="w-full" id="edit-convenio">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="nao">Não</SelectItem>
+                            <SelectItem value="sim">Sim</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    {form.convenio ? (
+                      <>
+                        <Field>
+                          <FieldLabel htmlFor="edit-convenio-carteirinha">
+                            Nº da carteirinha
+                          </FieldLabel>
+                          <Input
+                            id="edit-convenio-carteirinha"
+                            value={form.convenioCarteirinha}
+                            onChange={(e) =>
+                              update('convenioCarteirinha', e.target.value)
+                            }
+                            placeholder="Número da carteirinha"
+                          />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="edit-convenio-produto">
+                            Produto
+                          </FieldLabel>
+                          <Input
+                            id="edit-convenio-produto"
+                            value={form.convenioProduto}
+                            onChange={(e) =>
+                              update('convenioProduto', e.target.value)
+                            }
+                            placeholder="Ex.: Unimed Empresarial"
+                          />
+                        </Field>
+                      </>
+                    ) : null}
+                  </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <Field>
                       <FieldLabel htmlFor="edit-cep">CEP</FieldLabel>
@@ -609,14 +691,6 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
 
               <TabsContent value="clinico" className="mt-0">
                 <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="edit-objective">Objetivo</FieldLabel>
-                    <Textarea
-                      id="edit-objective"
-                      value={form.objective}
-                      onChange={(e) => update('objective', e.target.value)}
-                    />
-                  </Field>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <Field>
                       <FieldLabel htmlFor="edit-pathologies">
@@ -663,14 +737,6 @@ export function EditStudentDialog({ student, onSave }: EditStudentDialogProps) {
                       id="edit-medications"
                       value={form.medications}
                       onChange={(e) => update('medications', e.target.value)}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="edit-notes">Observações</FieldLabel>
-                    <Textarea
-                      id="edit-notes"
-                      value={form.notes}
-                      onChange={(e) => update('notes', e.target.value)}
                     />
                   </Field>
                 </FieldGroup>

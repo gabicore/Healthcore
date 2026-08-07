@@ -779,7 +779,7 @@ function StatCard({
 }) {
   return (
     <Card>
-      <CardContent className="flex flex-col gap-1 pt-6">
+      <CardContent className="flex flex-col gap-1">
         <span className="text-sm text-muted-foreground">{label}</span>
         <span
           className={`text-2xl font-semibold tabular-nums ${

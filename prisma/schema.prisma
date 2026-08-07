@@ -376,6 +376,10 @@ model Student {
   cpf              String        @default("")
   phone            String        @default("")
   email            String        @default("")
+  profession       String        @default("")
+  convenio         Boolean       @default(false)
+  convenioCarteirinha String     @default("")
+  convenioProduto  String        @default("")
   cep              String        @default("")
   street           String        @default("")
   addressNumber    String        @default("")
@@ -396,6 +400,29 @@ model Student {
   surgeries        String        @db.Text
   restrictions     String        @db.Text
   medications      String        @db.Text
+  allergies        String        @default("") @db.Text
+  implants         String        @default("") @db.Text
+  /** Alertas críticos exibidos no topo do perfil (atenção imediata antes do atendimento). */
+  clinicalAlerts   Json          @default("[]")
+  physicalActivity String        @default("") @db.Text
+  smoking          String        @default("") @db.Text
+  alcoholUse       String        @default("") @db.Text
+  hydration        String        @default("") @db.Text
+  workPosture      String        @default("") @db.Text
+  workHours        String        @default("")
+  sleepHours       String        @default("")
+  sleepQuality     String        @default("") @db.Text
+  insomnia         String        @default("") @db.Text
+  previousTreatments String      @default("") @db.Text
+  previousTreatmentFrequency String @default("") @db.Text
+  treatmentResults String        @default("") @db.Text
+  treatmentInterruptions String  @default("") @db.Text
+  treatmentResponse String       @default("") @db.Text
+  dischargeReason  String        @default("") @db.Text
+  exams            String        @default("") @db.Text
+  medicalReports   String        @default("") @db.Text
+  mriExams         String        @default("") @db.Text
+  xrayExams        String        @default("") @db.Text
   notes            String        @db.Text
   usesPilates      Boolean       @default(true)
   usesClinic       Boolean       @default(false)
@@ -463,6 +490,24 @@ model PhysicalAssessment {
   id          String   @id @default(cuid())
   studentId   String
   date        DateTime @db.Date
+  /** Inicial | Reavaliacao | Alta */
+  assessmentType String @default("Inicial")
+  professional String  @default("")
+  specialty    String  @default("")
+  service      String  @default("")
+  chiefComplaint String @default("") @db.Text
+  painScale    Int?
+  affectedRegion String @default("") @db.Text
+  functionalLimitations String @default("") @db.Text
+  clinicalFindings String @default("") @db.Text
+  testsPerformed String @default("") @db.Text
+  testResults  String  @default("") @db.Text
+  treatmentObjectives String @default("") @db.Text
+  weeklyFrequency String @default("")
+  estimatedSessions String @default("")
+  plannedTechniques String @default("") @db.Text
+  guidelines   String  @default("") @db.Text
+  referrals    String  @default("") @db.Text
   weight      Float
   height      Float
   bodyFat     Float?
